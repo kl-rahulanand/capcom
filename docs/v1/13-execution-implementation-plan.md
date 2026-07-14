@@ -202,6 +202,9 @@ Acceptance:
 
 ## Phase 5 - Manual Sync Loop
 
+Status: implemented, including periodic polling, persisted skills, freshness,
+sync history, and last-known-state preservation.
+
 Goal: persist actual runtime state and expose sync results.
 
 Tasks:
@@ -209,6 +212,8 @@ Tasks:
 - Add sync service.
 - Add manual sync endpoint.
 - Persist agents and runtime bindings.
+- Persist agent kind and parent relationships when the adapter provides them.
+- Persist current skill bindings separately from effective access.
 - Persist actual access documents.
 - Write sync audit events.
 - Store runtime degraded status on failures.
@@ -222,6 +227,8 @@ Acceptance:
 - Manual sync imports Gantry agents.
 - Repeated sync is idempotent.
 - Removed or missing agents are marked stale instead of hard-deleted.
+- Main, registered, and subagent identities remain distinguishable.
+- Unsupported hierarchy is reported as unavailable, not as an empty child list.
 - Sync failure does not erase last known actual state.
 
 ## Phase 6 - Desired State And CLI Apply
@@ -271,6 +278,10 @@ Acceptance:
 - Drift records include expected, actual, severity, and first/last observed timestamps.
 
 ## Phase 8 - Safe Control Action
+
+Status: backend and console flow implemented for access reconciliation. Live
+mutation verification requires a `control_enabled` runtime connection; the local
+read-only Gantry connection is covered by the audited rejection path.
 
 Goal: execute one audited runtime mutation through Gantry.
 

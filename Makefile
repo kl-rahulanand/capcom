@@ -1,4 +1,4 @@
-.PHONY: test vet run migrate-up
+.PHONY: test vet run migrate-up tidy
 
 test:
 	go test ./...
@@ -11,3 +11,6 @@ run:
 
 migrate-up:
 	go run ./cmd/capcom migrate up
+
+tidy:
+	go mod tidy

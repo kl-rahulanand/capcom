@@ -26,14 +26,22 @@ const (
 )
 
 type RuntimeConnection struct {
-	ID           string
-	Name         string
-	Kind         RuntimeKind
-	Mode         RuntimeMode
-	Status       RuntimeStatus
-	BaseURL      string
-	Metadata     map[string]any
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	LastSyncedAt *time.Time
+	ID                  string
+	Name                string
+	Kind                RuntimeKind
+	Mode                RuntimeMode
+	Status              RuntimeStatus
+	BaseURL             string
+	AuthRef             string
+	Metadata            map[string]any
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	LastSyncedAt        *time.Time
+	SyncEnabled         bool
+	SyncIntervalSeconds int
+	LastSyncStatus      SyncStatus
+	LastSyncStartedAt   *time.Time
+	LastSyncFinishedAt  *time.Time
+	LastSyncDurationMS  int64
+	LastError           string
 }

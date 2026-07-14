@@ -12,6 +12,12 @@ type gantryAgent struct {
 	Display     string         `json:"displayName"`
 	Description string         `json:"description"`
 	Status      string         `json:"status"`
+	AppID       string         `json:"appId"`
+	Harness     string         `json:"agentHarness"`
+	ConfigID    string         `json:"currentConfigVersionId"`
+	ParentID    string         `json:"parentAgentId"`
+	CreatedAt   string         `json:"createdAt"`
+	UpdatedAt   string         `json:"updatedAt"`
 	Raw         map[string]any `json:"-"`
 }
 
@@ -75,4 +81,51 @@ func (g *gantryAccess) UnmarshalJSON(data []byte) error {
 type gantrySelection struct {
 	ID      string `json:"id"`
 	Version string `json:"version"`
+}
+
+type gantrySkillBinding struct {
+	ID              string `json:"id"`
+	AgentID         string `json:"agentId"`
+	SkillID         string `json:"skillId"`
+	Status          string `json:"status"`
+	ConfigVersionID string `json:"configVersionId"`
+}
+
+type gantrySkill struct {
+	ID                string           `json:"id"`
+	Name              string           `json:"name"`
+	Description       string           `json:"description"`
+	Source            string           `json:"source"`
+	Status            string           `json:"status"`
+	PromptRefs        []string         `json:"promptRefs"`
+	ToolIDs           []string         `json:"toolIds"`
+	WorkflowRefs      []string         `json:"workflowRefs"`
+	RequiredEnvVars   []string         `json:"requiredEnvVars"`
+	ActionPermissions []map[string]any `json:"actionPermissions"`
+}
+
+type gantryRun struct {
+	RunID     string `json:"run_id"`
+	JobID     string `json:"job_id"`
+	StartedAt string `json:"started_at"`
+	EndedAt   string `json:"ended_at"`
+	Status    string `json:"status"`
+}
+
+type gantryRunEvent struct {
+	ID        string         `json:"id"`
+	RunID     string         `json:"runId"`
+	Type      string         `json:"type"`
+	Payload   map[string]any `json:"payload"`
+	CreatedAt string         `json:"createdAt"`
+	Metadata  struct {
+		RuntimeEventType string `json:"runtimeEventType"`
+	} `json:"metadata"`
+}
+
+type gantryJob struct {
+	JobID  string `json:"jobId"`
+	Target *struct {
+		AgentID string `json:"agentId"`
+	} `json:"target"`
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,8 +14,10 @@ import (
 	"capcom/internal/adapters/gantry"
 	"capcom/internal/api"
 	"capcom/internal/config"
+	secretcipher "capcom/internal/secrets"
 	"capcom/internal/services"
 	"capcom/internal/store"
+	"capcom/internal/workers"
 )
 
 func main() {
@@ -40,9 +43,17 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	defer stop()
 
 	routerConfig := api.RouterConfig{
-		Version: cfg.Service.Version,
+		Version:    cfg.Service.Version,
+		AdminToken: cfg.Security.AdminToken,
 	}
+	var syncWorker *workers.RuntimeSyncWorker
 	if cfg.Database.URL != "" {
+		if cfg.Security.AdminToken == "" {
+			return fmt.Errorf("CAPCOM_ADMIN_TOKEN is required when CAPCOM_DATABASE_URL is configured")
+		}
+		if len(cfg.Secrets.Key) != 32 {
+			return fmt.Errorf("CAPCOM_SECRET_KEY is required when CAPCOM_DATABASE_URL is configured")
+		}
 		db, err := store.OpenPostgres(cfg.Database)
 		if err != nil {
 			return err
@@ -55,13 +66,33 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			return err
 		}
 
-		routerConfig.RuntimeConnections = services.NewRuntimeConnectionService(
-			store.NewRuntimeConnectionRepository(db),
-			store.NewAuditRepository(db),
-		).WithAdapter(gantry.NewClient(nil))
+		cipher, err := secretcipher.NewCipher(cfg.Secrets.Key)
+		if err != nil {
+			return err
+		}
+		auditRepository := store.NewAuditRepository(db)
+		secretService := services.NewSecretService(store.NewSecretRepository(db), auditRepository, cipher)
+		runtimeRepository := store.NewRuntimeConnectionRepository(db)
+		gantryAdapter := gantry.NewClient(nil, secretService)
+		runtimeService := services.NewRuntimeConnectionService(runtimeRepository, auditRepository).
+			WithCredentialResolver(secretService).WithAdapter(gantryAdapter)
+		syncService := services.NewRuntimeSyncService(runtimeRepository, store.NewSyncRepository(db), auditRepository, cfg.Sync.MissingThreshold).
+			WithAdapter(gantryAdapter)
+		controlService := services.NewControlActionService(runtimeRepository, store.NewSyncRepository(db), store.NewControlActionRepository(db), auditRepository, syncService).
+			WithAdapter(gantryAdapter)
+		routerConfig.Secrets = secretService
+		routerConfig.RuntimeConnections = runtimeService
+		routerConfig.RuntimeSync = syncService
+		routerConfig.ControlActions = controlService
+		if cfg.Sync.WorkerEnabled {
+			syncWorker = workers.NewRuntimeSyncWorker(runtimeService, syncService, cfg.Sync.WorkerTick, cfg.Sync.MaxConcurrency, cfg.Sync.RequestTimeout, logger)
+		}
 		logger.Info("postgres connected")
 	} else {
 		logger.Warn("database not configured; runtime connection APIs will return service unavailable")
+	}
+	if syncWorker != nil {
+		go syncWorker.Run(ctx)
 	}
 
 	srv := &http.Server{

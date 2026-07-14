@@ -22,6 +22,7 @@ type AuditRepository interface {
 type RuntimeConnectionService struct {
 	runtimes RuntimeConnectionRepository
 	audit    AuditRepository
+	secrets  runtimeadapter.CredentialResolver
 	adapters map[domain.RuntimeKind]runtimeadapter.Adapter
 }
 
@@ -33,6 +34,12 @@ type CreateRuntimeConnectionInput struct {
 	Actor       string
 	Reason      string
 	Description string
+	AuthRef     string
+}
+
+func (s RuntimeConnectionService) WithCredentialResolver(resolver runtimeadapter.CredentialResolver) RuntimeConnectionService {
+	s.secrets = resolver
+	return s
 }
 
 func NewRuntimeConnectionService(runtimes RuntimeConnectionRepository, audit AuditRepository) RuntimeConnectionService {
@@ -61,6 +68,12 @@ func (s RuntimeConnectionService) Create(ctx context.Context, input CreateRuntim
 	if err := validateCreateRuntimeConnection(input); err != nil {
 		return domain.RuntimeConnection{}, err
 	}
+	if s.secrets == nil {
+		return domain.RuntimeConnection{}, fmt.Errorf("credential resolver is required")
+	}
+	if _, err := s.secrets.Resolve(ctx, input.AuthRef); err != nil {
+		return domain.RuntimeConnection{}, fmt.Errorf("resolve auth_ref: %w", err)
+	}
 
 	conn, err := s.runtimes.Create(ctx, domain.RuntimeConnection{
 		Name:    strings.TrimSpace(input.Name),
@@ -68,6 +81,7 @@ func (s RuntimeConnectionService) Create(ctx context.Context, input CreateRuntim
 		Mode:    input.Mode,
 		Status:  domain.RuntimeStatusPending,
 		BaseURL: strings.TrimSpace(input.Endpoint),
+		AuthRef: strings.TrimSpace(input.AuthRef),
 		Metadata: map[string]any{
 			"description": strings.TrimSpace(input.Description),
 		},
@@ -92,6 +106,7 @@ func (s RuntimeConnectionService) Create(ctx context.Context, input CreateRuntim
 				"mode":         string(conn.Mode),
 				"status":       string(conn.Status),
 				"endpoint":     conn.BaseURL,
+				"auth_ref":     conn.AuthRef,
 			},
 		}); err != nil {
 			return domain.RuntimeConnection{}, fmt.Errorf("audit runtime connection creation: %w", err)
@@ -113,17 +128,56 @@ func (s RuntimeConnectionService) List(ctx context.Context) ([]domain.RuntimeCon
 }
 
 func (s RuntimeConnectionService) Test(ctx context.Context, id string) (*runtimeadapter.CheckResult, error) {
-	conn, err := s.Get(ctx, id)
+	conn, adapter, err := s.connectionAdapter(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 
-	adapter, ok := s.adapters[conn.Kind]
-	if !ok {
-		return nil, fmt.Errorf("runtime adapter %q is not registered", conn.Kind)
+	return adapter.Check(ctx, conn)
+}
+
+func (s RuntimeConnectionService) ListAgents(ctx context.Context, id string) ([]domain.AgentSnapshot, error) {
+	conn, adapter, err := s.connectionAdapter(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 
-	return adapter.Check(ctx, conn)
+	return adapter.ListAgents(ctx, conn)
+}
+
+func (s RuntimeConnectionService) GetAgentAccess(ctx context.Context, id string, runtimeAgentID string) (*domain.AccessDocument, error) {
+	if strings.TrimSpace(runtimeAgentID) == "" {
+		return nil, fmt.Errorf("runtime agent id is required")
+	}
+	conn, adapter, err := s.connectionAdapter(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	return adapter.GetAgentAccess(ctx, conn, strings.TrimSpace(runtimeAgentID))
+}
+
+func (s RuntimeConnectionService) ListAgentSkills(ctx context.Context, id string, runtimeAgentID string) ([]domain.AgentSkillSnapshot, error) {
+	if strings.TrimSpace(runtimeAgentID) == "" {
+		return nil, fmt.Errorf("runtime agent id is required")
+	}
+	conn, adapter, err := s.connectionAdapter(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return adapter.ListAgentSkills(ctx, conn, strings.TrimSpace(runtimeAgentID))
+}
+
+func (s RuntimeConnectionService) connectionAdapter(ctx context.Context, id string) (domain.RuntimeConnection, runtimeadapter.Adapter, error) {
+	conn, err := s.Get(ctx, id)
+	if err != nil {
+		return domain.RuntimeConnection{}, nil, err
+	}
+	adapter, ok := s.adapters[conn.Kind]
+	if !ok {
+		return domain.RuntimeConnection{}, nil, fmt.Errorf("runtime adapter %q is not registered", conn.Kind)
+	}
+	return conn, adapter, nil
 }
 
 func validateCreateRuntimeConnection(input CreateRuntimeConnectionInput) error {
@@ -140,6 +194,15 @@ func validateCreateRuntimeConnection(input CreateRuntimeConnectionInput) error {
 	}
 	if strings.TrimSpace(input.Endpoint) == "" {
 		return fmt.Errorf("endpoint is required")
+	}
+	if strings.TrimSpace(input.AuthRef) == "" {
+		return fmt.Errorf("auth_ref is required")
+	}
+	if strings.TrimSpace(input.Actor) == "" {
+		return fmt.Errorf("actor is required")
+	}
+	if strings.TrimSpace(input.Reason) == "" {
+		return fmt.Errorf("reason is required")
 	}
 	return nil
 }

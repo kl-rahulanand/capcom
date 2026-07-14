@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	runtimeadapter "capcom/internal/adapters/runtime"
@@ -18,17 +19,19 @@ import (
 const defaultTimeout = 10 * time.Second
 
 type Client struct {
-	httpClient *http.Client
-	timeout    time.Duration
+	httpClient  *http.Client
+	timeout     time.Duration
+	credentials runtimeadapter.CredentialResolver
 }
 
-func NewClient(httpClient *http.Client) Client {
+func NewClient(httpClient *http.Client, credentials runtimeadapter.CredentialResolver) Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 	return Client{
-		httpClient: httpClient,
-		timeout:    defaultTimeout,
+		httpClient:  httpClient,
+		timeout:     defaultTimeout,
+		credentials: credentials,
 	}
 }
 
@@ -46,35 +49,295 @@ func (c Client) Check(ctx context.Context, conn domain.RuntimeConnection) (*runt
 		Status:  domain.RuntimeStatusActive,
 		Message: "gantry health check succeeded",
 		Capabilities: runtimeadapter.Capabilities{
-			ReadAgents:         true,
-			ReadAgentAccess:    true,
-			ReplaceAgentAccess: conn.Mode == domain.RuntimeModeControlEnabled,
+			ReadAgents:             true,
+			ReadAgentHierarchy:     false,
+			ReadAgentSkills:        true,
+			ReadAgentAccess:        true,
+			ReplaceAgentAccess:     conn.Mode == domain.RuntimeModeControlEnabled,
+			ReadSubagentExecutions: true,
 		},
 		Metadata: payload,
 	}, nil
 }
 
 func (c Client) ListAgents(ctx context.Context, conn domain.RuntimeConnection) ([]domain.AgentSnapshot, error) {
-	var agents []gantryAgent
-	if err := c.doJSON(ctx, conn, http.MethodGet, "/v1/agents", nil, &agents); err != nil {
+	var payload json.RawMessage
+	if err := c.doJSON(ctx, conn, http.MethodGet, "/v1/agents", nil, &payload); err != nil {
 		return nil, err
+	}
+	agents, err := decodeAgentList(payload)
+	if err != nil {
+		return nil, fmt.Errorf("decode gantry agent list: %w", err)
 	}
 
 	snapshots := make([]domain.AgentSnapshot, 0, len(agents))
 	observedAt := time.Now().UTC()
 	for _, agent := range agents {
+		kind := gantryAgentKind(agent.ID)
+		if agent.ParentID != "" {
+			kind = domain.AgentKindSubagent
+		}
 		snapshots = append(snapshots, domain.AgentSnapshot{
-			RuntimeAgentID: agent.ID,
-			Name:           agent.DisplayName(),
-			Status:         agent.StatusDomain(),
+			RuntimeAgentID:       agent.ID,
+			ParentRuntimeAgentID: agent.ParentID,
+			Kind:                 kind,
+			Name:                 agent.DisplayName(),
+			Status:               agent.StatusDomain(),
 			Metadata: map[string]any{
-				"description": agent.Description,
-				"raw":         agent.Raw,
+				"description":               agent.Description,
+				"app_id":                    agent.AppID,
+				"agent_harness":             agent.Harness,
+				"current_config_version_id": agent.ConfigID,
+				"runtime_created_at":        agent.CreatedAt,
+				"runtime_updated_at":        agent.UpdatedAt,
 			},
 			ObservedAt: observedAt,
 		})
 	}
 	return snapshots, nil
+}
+
+func (c Client) CollectSnapshot(ctx context.Context, conn domain.RuntimeConnection) (*domain.RuntimeSnapshot, error) {
+	check, err := c.Check(ctx, conn)
+	if err != nil {
+		return nil, fmt.Errorf("check gantry before snapshot: %w", err)
+	}
+	agents, err := c.ListAgents(ctx, conn)
+	if err != nil {
+		return nil, fmt.Errorf("list agents for snapshot: %w", err)
+	}
+
+	observedAt := time.Now().UTC()
+	snapshot := &domain.RuntimeSnapshot{
+		ObservedAt: observedAt,
+		Metadata:   check.Metadata,
+		Capabilities: map[string]bool{
+			"read_agents":              check.Capabilities.ReadAgents,
+			"read_agent_hierarchy":     check.Capabilities.ReadAgentHierarchy,
+			"read_agent_skills":        check.Capabilities.ReadAgentSkills,
+			"read_agent_access":        check.Capabilities.ReadAgentAccess,
+			"replace_agent_access":     check.Capabilities.ReplaceAgentAccess,
+			"read_subagent_executions": check.Capabilities.ReadSubagentExecutions,
+		},
+		Agents: make([]domain.SnapshotAgent, 0, len(agents)),
+	}
+	items := make([]domain.SnapshotAgent, len(agents))
+	jobs := make(chan int)
+	workerCount := len(agents)
+	if workerCount > 4 {
+		workerCount = 4
+	}
+	var wg sync.WaitGroup
+	var firstErr error
+	var errOnce sync.Once
+	for range workerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				agent := agents[index]
+				skills, err := c.ListAgentSkills(ctx, conn, agent.RuntimeAgentID)
+				if err != nil {
+					errOnce.Do(func() { firstErr = fmt.Errorf("list skills for agent %q: %w", agent.RuntimeAgentID, err) })
+					continue
+				}
+				access, err := c.GetAgentAccess(ctx, conn, agent.RuntimeAgentID)
+				if err != nil {
+					errOnce.Do(func() { firstErr = fmt.Errorf("get access for agent %q: %w", agent.RuntimeAgentID, err) })
+					continue
+				}
+				agent.ObservedAt = observedAt
+				access.ObservedAt = observedAt
+				for i := range skills {
+					skills[i].ObservedAt = observedAt
+				}
+				items[index] = domain.SnapshotAgent{Agent: agent, Skills: skills, Access: *access}
+			}
+		}()
+	}
+	for index := range agents {
+		jobs <- index
+	}
+	close(jobs)
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	snapshot.Agents = items
+	executions, err := c.listSubagentExecutions(ctx, conn, observedAt)
+	if err != nil {
+		return nil, fmt.Errorf("list subagent executions for snapshot: %w", err)
+	}
+	snapshot.SubagentExecutions = executions
+	return snapshot, nil
+}
+
+func (c Client) listSubagentExecutions(ctx context.Context, conn domain.RuntimeConnection, observedAt time.Time) ([]domain.SubagentExecutionSnapshot, error) {
+	var runsPayload struct {
+		Runs []gantryRun `json:"runs"`
+	}
+	if err := c.doJSON(ctx, conn, http.MethodGet, "/v1/runs", nil, &runsPayload); err != nil {
+		return nil, err
+	}
+	var jobsPayload struct {
+		Jobs []gantryJob `json:"jobs"`
+	}
+	if err := c.doJSON(ctx, conn, http.MethodGet, "/v1/jobs?limit=100", nil, &jobsPayload); err != nil {
+		return nil, err
+	}
+	owners := make(map[string]string, len(jobsPayload.Jobs))
+	for _, job := range jobsPayload.Jobs {
+		if job.Target != nil {
+			owners[job.JobID] = job.Target.AgentID
+		}
+	}
+	var result []domain.SubagentExecutionSnapshot
+	for _, run := range runsPayload.Runs {
+		var eventsPayload struct {
+			Events []gantryRunEvent `json:"events"`
+		}
+		path := fmt.Sprintf("/v1/runs/%s/events", url.PathEscape(run.RunID))
+		if err := c.doJSON(ctx, conn, http.MethodGet, path, nil, &eventsPayload); err != nil {
+			return nil, err
+		}
+		result = append(result, normalizeDelegatedExecutions(run, owners[run.JobID], eventsPayload.Events, observedAt)...)
+	}
+	return result, nil
+}
+
+func normalizeDelegatedExecutions(run gantryRun, runtimeAgentID string, events []gantryRunEvent, observedAt time.Time) []domain.SubagentExecutionSnapshot {
+	byTask := map[string]*domain.SubagentExecutionSnapshot{}
+	order := []string{}
+	for _, event := range events {
+		taskID := mapString(event.Payload, "taskId")
+		if taskID == "" {
+			continue
+		}
+		item := byTask[taskID]
+		kind := mapString(event.Payload, "taskKind")
+		if item == nil {
+			if kind != "delegated_agent" {
+				continue
+			}
+			item = &domain.SubagentExecutionSnapshot{RuntimeExecutionID: taskID, ParentRunID: run.RunID, RuntimeAgentID: runtimeAgentID, Status: "running", ObservedAt: observedAt, Metadata: map[string]any{"job_id": run.JobID}, Raw: map[string]any{}}
+			byTask[taskID] = item
+			order = append(order, taskID)
+		}
+		if value := mapString(event.Payload, "subagentType"); value != "" {
+			item.SubagentType = value
+		}
+		if value := mapString(event.Payload, "description"); value != "" {
+			item.Description = value
+		}
+		if value := mapString(event.Payload, "summary"); value != "" {
+			item.Summary = value
+		}
+		status := mapString(event.Payload, "status")
+		if patch, ok := event.Payload["patch"].(map[string]any); ok {
+			if value := mapString(patch, "status"); value != "" {
+				status = value
+			}
+		}
+		if status != "" {
+			item.Status = status
+		}
+		if event.Metadata.RuntimeEventType == "task.started" && item.StartedAt == nil {
+			item.StartedAt = parseGantryTime(event.CreatedAt)
+		}
+		if status == "completed" || status == "failed" || status == "cancelled" || status == "timed_out" {
+			item.EndedAt = parseGantryTime(event.CreatedAt)
+		}
+		item.Raw[event.ID] = event.Payload
+	}
+	result := make([]domain.SubagentExecutionSnapshot, 0, len(order))
+	for _, id := range order {
+		result = append(result, *byTask[id])
+	}
+	return result
+}
+
+func mapString(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func parseGantryTime(value string) *time.Time {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
+func (c Client) ListAgentSkills(ctx context.Context, conn domain.RuntimeConnection, runtimeAgentID string) ([]domain.AgentSkillSnapshot, error) {
+	path := fmt.Sprintf("/v1/agents/%s/skills", url.PathEscape(runtimeAgentID))
+	var payload struct {
+		Bindings []gantrySkillBinding `json:"bindings"`
+	}
+	if err := c.doJSON(ctx, conn, http.MethodGet, path, nil, &payload); err != nil {
+		return nil, err
+	}
+	var catalogPayload struct {
+		Skills []gantrySkill `json:"skills"`
+	}
+	if err := c.doJSON(ctx, conn, http.MethodGet, "/v1/skills", nil, &catalogPayload); err != nil {
+		return nil, err
+	}
+	catalog := make(map[string]gantrySkill, len(catalogPayload.Skills))
+	for _, skill := range catalogPayload.Skills {
+		catalog[skill.ID] = skill
+	}
+
+	observedAt := time.Now().UTC()
+	skills := make([]domain.AgentSkillSnapshot, 0, len(payload.Bindings))
+	for _, binding := range payload.Bindings {
+		detail := catalog[binding.SkillID]
+		name := detail.Name
+		if name == "" {
+			name = binding.SkillID
+		}
+		skills = append(skills, domain.AgentSkillSnapshot{
+			RuntimeSkillID: binding.SkillID,
+			Name:           name,
+			Description:    detail.Description,
+			Source:         detail.Source,
+			Status:         binding.Status,
+			Version:        binding.ConfigVersionID,
+			ToolIDs:        detail.ToolIDs,
+			WorkflowRefs:   detail.WorkflowRefs,
+			Metadata: map[string]any{
+				"binding_id":         binding.ID,
+				"catalog_status":     detail.Status,
+				"prompt_refs":        detail.PromptRefs,
+				"required_env_vars":  detail.RequiredEnvVars,
+				"action_permissions": detail.ActionPermissions,
+			},
+			ObservedAt: observedAt,
+		})
+	}
+	return skills, nil
+}
+
+func gantryAgentKind(runtimeAgentID string) domain.AgentKind {
+	if runtimeAgentID == "agent:main_agent" {
+		return domain.AgentKindMain
+	}
+	return domain.AgentKindRegistered
+}
+
+func decodeAgentList(payload json.RawMessage) ([]gantryAgent, error) {
+	var envelope struct {
+		Agents []gantryAgent `json:"agents"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err == nil && envelope.Agents != nil {
+		return envelope.Agents, nil
+	}
+
+	var agents []gantryAgent
+	if err := json.Unmarshal(payload, &agents); err != nil {
+		return nil, err
+	}
+	return agents, nil
 }
 
 func (c Client) GetAgentAccess(ctx context.Context, conn domain.RuntimeConnection, runtimeAgentID string) (*domain.AccessDocument, error) {
@@ -145,6 +408,17 @@ func (c Client) doJSON(ctx context.Context, conn domain.RuntimeConnection, metho
 		return fmt.Errorf("build gantry request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	if c.credentials == nil {
+		return fmt.Errorf("gantry credential resolver is required")
+	}
+	token, err := c.credentials.Resolve(requestCtx, conn.AuthRef)
+	if err != nil {
+		return fmt.Errorf("resolve gantry credential %q: %w", conn.AuthRef, err)
+	}
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("gantry credential %q is empty", conn.AuthRef)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

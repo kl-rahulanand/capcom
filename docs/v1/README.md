@@ -34,13 +34,13 @@ The product is not an observability dashboard or a new agent runtime. Gantry run
 | 11 | `11-development-rules.md` | Engineering rules before implementation starts |
 | 12 | `12-go-coding-rulebook.md` | Go-specific coding practices for agents and engineers |
 | 13 | `13-execution-implementation-plan.md` | Execution sequence, task breakdown, and acceptance gates |
-| 14 | `14-local-dev-api-tooling-plan.md` | Local env, Go-native scripts, and OpenAPI tooling plan |
+| 14 | `14-durable-runtime-sync-and-access-control-plan.md` | Detailed plan for durable sync, stale-state handling, worker scheduling, and audited access control |
 
 ## V1 Decisions
 
 - Backend: Go.
 - Database: Postgres.
-- Dashboard: React/Next.js.
+- Dashboard: dependency-free web console embedded in the Go server for V1.
 - CLI: Go CLI in the same repo/module.
 - First runtime adapter: Gantry.
 - Event mode: polling/control API first.

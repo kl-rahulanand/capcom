@@ -1,9 +1,11 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,8 +20,27 @@ const (
 type Config struct {
 	HTTP     HTTPConfig
 	Database DatabaseConfig
+	Secrets  SecretConfig
+	Security SecurityConfig
 	Service  ServiceConfig
+	Sync     SyncConfig
 	LogLevel slog.Level
+}
+
+type SyncConfig struct {
+	WorkerEnabled    bool
+	WorkerTick       time.Duration
+	MaxConcurrency   int
+	RequestTimeout   time.Duration
+	MissingThreshold int
+}
+
+type SecretConfig struct {
+	Key []byte
+}
+
+type SecurityConfig struct {
+	AdminToken string
 }
 
 type HTTPConfig struct {
@@ -40,10 +61,19 @@ type DatabaseConfig struct {
 }
 
 func Load() (Config, error) {
-	return LoadFromLookup(os.LookupEnv)
+	dotEnv, err := loadDotEnv(".env")
+	if err != nil {
+		return Config{}, err
+	}
+	return LoadFromLookup(mergedLookup(dotEnv, os.LookupEnv))
 }
 
 func LoadFromLookup(lookup func(string) (string, bool)) (Config, error) {
+	secretKey, err := secretKeyEnv(lookup, "CAPCOM_SECRET_KEY")
+	if err != nil {
+		return Config{}, err
+	}
+
 	readHeaderTimeout, err := durationEnv(lookup, "CAPCOM_HTTP_READ_HEADER_TIMEOUT", defaultReadHeaderTimeout)
 	if err != nil {
 		return Config{}, err
@@ -73,6 +103,26 @@ func LoadFromLookup(lookup func(string) (string, bool)) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	workerTick, err := durationEnv(lookup, "CAPCOM_SYNC_WORKER_TICK", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	requestTimeout, err := durationEnv(lookup, "CAPCOM_SYNC_REQUEST_TIMEOUT", 30*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	maxConcurrency, err := positiveIntEnv(lookup, "CAPCOM_SYNC_MAX_CONCURRENCY", 4)
+	if err != nil {
+		return Config{}, err
+	}
+	missingThreshold, err := positiveIntEnv(lookup, "CAPCOM_SYNC_MISSING_THRESHOLD", 3)
+	if err != nil {
+		return Config{}, err
+	}
+	workerEnabled, err := boolEnv(lookup, "CAPCOM_SYNC_WORKER_ENABLED", true)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		HTTP: HTTPConfig{
@@ -86,11 +136,60 @@ func LoadFromLookup(lookup func(string) (string, bool)) (Config, error) {
 			MaxIdleConns:    maxIdleConns,
 			ConnMaxLifetime: connMaxLifetime,
 		},
+		Secrets: SecretConfig{Key: secretKey},
+		Security: SecurityConfig{
+			AdminToken: stringEnv(lookup, "CAPCOM_ADMIN_TOKEN", ""),
+		},
 		Service: ServiceConfig{
 			Version: stringEnv(lookup, "CAPCOM_SERVICE_VERSION", defaultServiceVersion),
 		},
+		Sync: SyncConfig{
+			WorkerEnabled:    workerEnabled,
+			WorkerTick:       workerTick,
+			MaxConcurrency:   maxConcurrency,
+			RequestTimeout:   requestTimeout,
+			MissingThreshold: missingThreshold,
+		},
 		LogLevel: logLevel,
 	}, nil
+}
+
+func boolEnv(lookup func(string) (string, bool), key string, fallback bool) (bool, error) {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return false, fmt.Errorf("parse %s: %w", key, err)
+	}
+	return parsed, nil
+}
+
+func positiveIntEnv(lookup func(string) (string, bool), key string, fallback int) (int, error) {
+	value, err := intEnv(lookup, key, fallback)
+	if err != nil {
+		return 0, err
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("%s must be positive", key)
+	}
+	return value, nil
+}
+
+func secretKeyEnv(lookup func(string) (string, bool), key string) ([]byte, error) {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return nil, fmt.Errorf("parse %s as base64: %w", key, err)
+	}
+	if len(decoded) != 32 {
+		return nil, fmt.Errorf("%s must decode to exactly 32 bytes", key)
+	}
+	return decoded, nil
 }
 
 func stringEnv(lookup func(string) (string, bool), key string, fallback string) string {
