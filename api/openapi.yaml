@@ -1,0 +1,788 @@
+openapi: 3.1.0
+info:
+  title: Capcom API
+  version: 0.1.0
+  description: Runtime-agnostic AgentOps control-plane API.
+servers:
+  - url: http://127.0.0.1:8080
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      security: []
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /v1/secrets:
+    post:
+      summary: Store an encrypted secret
+      operationId: createSecret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSecretRequest"
+      responses:
+        "201":
+          description: Secret stored; the value is never returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretMetadata"
+        "400":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /v1/secrets/{name}:
+    put:
+      summary: Rotate an encrypted secret
+      operationId: rotateSecret
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateSecretRequest"
+      responses:
+        "200":
+          description: Secret rotated; the value is never returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretMetadata"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /v1/runtime-connections:
+    post:
+      summary: Create a runtime connection
+      operationId: createRuntimeConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRuntimeConnectionRequest"
+      responses:
+        "201":
+          description: Runtime connection created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeConnection"
+        "400":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+    get:
+      summary: List runtime connections
+      operationId: listRuntimeConnections
+      responses:
+        "200":
+          description: Runtime connections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeConnection"
+        "503":
+          $ref: "#/components/responses/Error"
+  /v1/runtime-connections/{id}:
+    get:
+      summary: Get a runtime connection
+      operationId: getRuntimeConnection
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+      responses:
+        "200":
+          description: Runtime connection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeConnection"
+        "404":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /v1/runtime-connections/{id}/test:
+    post:
+      summary: Test a runtime connection through its adapter
+      operationId: testRuntimeConnection
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+      responses:
+        "200":
+          description: Runtime connection test result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeConnectionTestResult"
+        "404":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /v1/runtime-connections/{id}/agents:
+    get:
+      summary: Read live agents through the selected runtime adapter
+      operationId: listRuntimeAgents
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+      responses:
+        "200":
+          description: Runtime-normalized live agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeAgent"
+        "404":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /v1/runtime-connections/{id}/agents/{agentID}/access:
+    get:
+      summary: Read a live agent access document through the runtime adapter
+      operationId: getRuntimeAgentAccess
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+        - name: agentID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Runtime-normalized agent access document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeAgentAccess"
+        "404":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /v1/runtime-connections/{id}/agents/{agentID}/skills:
+    get:
+      summary: Read current skill bindings through the runtime adapter
+      operationId: listRuntimeAgentSkills
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+        - name: agentID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Runtime-normalized current agent skills
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeAgentSkill"
+        "404":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /v1/runtime-connections/{id}/sync:
+    post:
+      summary: Run a complete durable runtime synchronization
+      operationId: syncRuntimeConnection
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncRuntimeRequest"
+      responses:
+        "200":
+          description: Completed synchronization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeSyncRun"
+        "409":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+  /v1/runtime-connections/{id}/sync-runs:
+    get:
+      summary: List synchronization history
+      operationId: listRuntimeSyncRuns
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Synchronization history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeSyncRun"
+  /v1/runtime-connections/{id}/sync-runs/{runID}:
+    get:
+      summary: Get one synchronization run
+      operationId: getRuntimeSyncRun
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+        - name: runID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Synchronization run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeSyncRun"
+        "404":
+          $ref: "#/components/responses/Error"
+  /v1/agents:
+    get:
+      summary: List persisted runtime agents with freshness metadata
+      operationId: listAgents
+      parameters:
+        - name: runtime_connection_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Persisted agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PersistedAgent"
+  /v1/agents/{id}:
+    get:
+      summary: Get one persisted agent
+      operationId: getAgent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Persisted agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersistedAgent"
+  /v1/agents/{id}/access:
+    get:
+      summary: Get persisted effective access
+      operationId: getAgentAccess
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Persisted access document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeAgentAccess"
+  /v1/agents/{id}/skills:
+    get:
+      summary: Get persisted assigned skills
+      operationId: getAgentSkills
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Persisted assigned skills
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeAgentSkill"
+  /v1/agents/{id}/actions/reconcile-access:
+    post:
+      summary: Validate or replace an agent access document
+      operationId: reconcileAgentAccess
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconcileAccessRequest"
+      responses:
+        "200":
+          description: Control action result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlAction"
+        "400":
+          $ref: "#/components/responses/Error"
+  /v1/subagent-executions:
+    get:
+      summary: List observed ephemeral subagent executions
+      operationId: listSubagentExecutions
+      parameters:
+        - name: runtime_connection_id
+          in: query
+          schema:
+            type: string
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Delegated execution observations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SubagentExecution"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Capcom admin token
+  parameters:
+    RuntimeConnectionID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, version]
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: capcom
+        version:
+          type: string
+          example: dev
+    CreateRuntimeConnectionRequest:
+      type: object
+      required: [name, runtime_type, mode, endpoint, auth_ref, actor, reason]
+      properties:
+        name:
+          type: string
+          example: local-gantry
+        runtime_type:
+          type: string
+          enum: [gantry]
+        mode:
+          type: string
+          enum: [read_only, control_enabled]
+        endpoint:
+          type: string
+          format: uri
+          example: http://127.0.0.1:8787
+        auth_ref:
+          type: string
+          example: gantry-control-api-key
+        actor:
+          type: string
+          example: local-dev
+        reason:
+          type: string
+          example: initial Gantry connection
+        description:
+          type: string
+    RuntimeConnection:
+      type: object
+      required: [id, name, runtime_type, mode, status, endpoint, auth_ref, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        runtime_type:
+          type: string
+          enum: [gantry]
+        mode:
+          type: string
+          enum: [read_only, control_enabled]
+        status:
+          type: string
+          enum: [pending, active, degraded, disabled, failed]
+        endpoint:
+          type: string
+        auth_ref:
+          type: string
+          description: Secret reference only; secret material is never returned.
+        last_synced_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    RuntimeConnectionTestResult:
+      type: object
+      required: [status, message, capabilities]
+      properties:
+        status:
+          type: string
+          enum: [active, degraded, failed]
+        message:
+          type: string
+        capabilities:
+          $ref: "#/components/schemas/RuntimeCapabilities"
+        metadata:
+          type: object
+          additionalProperties: true
+    RuntimeCapabilities:
+      type: object
+      required: [read_agents, read_agent_hierarchy, read_agent_skills, read_agent_access, replace_agent_access]
+      properties:
+        read_agents:
+          type: boolean
+        read_agent_hierarchy:
+          type: boolean
+        read_agent_skills:
+          type: boolean
+        read_agent_access:
+          type: boolean
+        replace_agent_access:
+          type: boolean
+    RuntimeAgent:
+      type: object
+      required: [runtime_agent_id, kind, name, status, observed_at]
+      properties:
+        runtime_agent_id:
+          type: string
+        parent_runtime_agent_id:
+          type: string
+        kind:
+          type: string
+          enum: [main, registered, subagent]
+        name:
+          type: string
+        status:
+          type: string
+          enum: [unknown, enabled, disabled, stale]
+        metadata:
+          type: object
+          additionalProperties: true
+        observed_at:
+          type: string
+          format: date-time
+    RuntimeAgentSkill:
+      type: object
+      required: [runtime_skill_id, name, status, tool_ids, workflow_refs, observed_at]
+      properties:
+        runtime_skill_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        source:
+          type: string
+        status:
+          type: string
+        version:
+          type: string
+        tool_ids:
+          type: array
+          items:
+            type: string
+        workflow_refs:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        observed_at:
+          type: string
+          format: date-time
+    RuntimeAgentAccess:
+      type: object
+      required: [agent_id, selections, observed_at, source]
+      properties:
+        agent_id:
+          type: string
+        selections:
+          type: array
+          items:
+            $ref: "#/components/schemas/RuntimeAccessSelection"
+        observed_at:
+          type: string
+          format: date-time
+        source:
+          type: string
+    RuntimeAccessSelection:
+      type: object
+      required: [kind, id, name, allowed]
+      properties:
+        kind:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        allowed:
+          type: boolean
+        attributes:
+          type: object
+          additionalProperties: true
+    CreateSecretRequest:
+      type: object
+      required: [name, value, actor, reason]
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z][A-Za-z0-9._-]{0,127}$"
+        value:
+          type: string
+          writeOnly: true
+        actor:
+          type: string
+        reason:
+          type: string
+    RotateSecretRequest:
+      type: object
+      required: [value, actor, reason]
+      properties:
+        value:
+          type: string
+          writeOnly: true
+        actor:
+          type: string
+        reason:
+          type: string
+    SyncRuntimeRequest:
+      type: object
+      required: [actor, reason]
+      properties:
+        actor:
+          type: string
+        reason:
+          type: string
+    RuntimeSyncRun:
+      type: object
+      required: [id, runtime_connection_id, trigger, status, started_at]
+      properties:
+        id:
+          type: string
+        runtime_connection_id:
+          type: string
+        trigger:
+          type: string
+          enum: [manual, scheduled, post_action]
+        status:
+          type: string
+          enum: [running, succeeded, failed, skipped]
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_ms:
+          type: integer
+        agents_seen:
+          type: integer
+        skills_seen:
+          type: integer
+        error_code:
+          type: string
+        error_message:
+          type: string
+    PersistedAgent:
+      type: object
+      required: [id, name, status, kind, runtime_connection_id, runtime_agent_id, freshness, observed_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        kind:
+          type: string
+          enum: [main, registered, subagent]
+        runtime_connection_id:
+          type: string
+        runtime_agent_id:
+          type: string
+        parent_runtime_agent_id:
+          type: string
+        freshness:
+          type: string
+          enum: [live, cached, stale]
+        observed_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+    SubagentExecution:
+      type: object
+      required: [id, runtime_connection_id, runtime_execution_id, parent_run_id, status, observed_at]
+      properties:
+        id:
+          type: string
+        runtime_connection_id:
+          type: string
+        runtime_execution_id:
+          type: string
+        parent_run_id:
+          type: string
+        runtime_agent_id:
+          type: string
+        subagent_type:
+          type: string
+        status:
+          type: string
+        description:
+          type: string
+        summary:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        observed_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+    ReconcileAccessRequest:
+      type: object
+      required: [selections, actor, reason, idempotency_key]
+      properties:
+        selections:
+          type: array
+          items:
+            $ref: "#/components/schemas/RuntimeAccessSelection"
+        actor:
+          type: string
+        reason:
+          type: string
+        idempotency_key:
+          type: string
+        dry_run:
+          type: boolean
+          default: false
+    ControlAction:
+      type: object
+      required: [id, runtime_connection_id, agent_id, action_type, status, actor, reason, idempotency_key]
+      properties:
+        id:
+          type: string
+        runtime_connection_id:
+          type: string
+        agent_id:
+          type: string
+        action_type:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, rejected]
+        actor:
+          type: string
+        reason:
+          type: string
+        idempotency_key:
+          type: string
+        result:
+          type: object
+          additionalProperties: true
+    SecretMetadata:
+      type: object
+      required: [id, name, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

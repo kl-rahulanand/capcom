@@ -32,6 +32,7 @@ type RuntimeAdapter interface {
     Health(ctx context.Context) (RuntimeHealth, error)
     Doctor(ctx context.Context) (RuntimeDoctor, error)
     ListAgents(ctx context.Context) ([]RuntimeAgent, error)
+    ListAgentSkills(ctx context.Context, externalAgentID string) ([]RuntimeAgentSkill, error)
     GetAgentAdmin(ctx context.Context, externalAgentID string) (RuntimeAgentAdmin, error)
     GetAgentAccess(ctx context.Context, externalAgentID string) (RuntimeAgentAccess, error)
     ReplaceAgentAccess(ctx context.Context, externalAgentID string, access RuntimeAgentAccessDesired) (RuntimeAgentAccess, error)
@@ -50,6 +51,7 @@ type RuntimeAdapter interface {
 | Health | `GET /v1/health` |
 | Doctor | `GET /v1/doctor` |
 | ListAgents | `GET /v1/agents` |
+| ListAgentSkills | `GET /v1/agents/{agentId}/skills` |
 | GetAgentAdmin | `GET /v1/agents/{agentId}/admin` |
 | GetAgentAccess | `GET /v1/agents/{agentId}/access` |
 | ReplaceAgentAccess | `PUT /v1/agents/{agentId}/access` |
@@ -59,6 +61,30 @@ type RuntimeAdapter interface {
 | ListAgentEvents | `GET /v1/sessions/{sessionId}/events` or run/job event routes |
 | ListRuns | `GET /v1/runs` |
 | ListRunEvents | `GET /v1/runs/{runId}/events` |
+| ResolveRunOwner | `GET /v1/jobs?limit=100` (`target.agentId`) |
+
+Current Gantry returns agent inventory as `{ "agents": [...] }`. The adapter
+also accepts the earlier bare-array response so recorded fixtures and compatible
+older runtimes continue to work.
+
+Gantry's current durable agent inventory does not include parent-child fields for
+native execution-time subagents. Capcom classifies `agent:main_agent` as `main`
+and other returned durable agents as `registered`; it must not infer that every
+secondary registered agent is a subagent. Hierarchy capability remains false
+until Gantry exposes stable parent identity. Ephemeral delegated/subagent runs
+belong in execution history, not durable agent inventory.
+
+Capcom recognizes a Gantry subagent execution only after a run event reports
+`taskKind: delegated_agent`. It correlates `task.started`, `task.progress`,
+`task.updated`, and `task.notification` by `taskId`; ordinary async command
+tasks are ignored. The owning durable agent is resolved from the run's `job_id`
+to the job target. Gantry currently exposes job runs only through `/v1/runs`,
+so no executions are reported when the runtime has no job runs.
+
+`ListAgentSkills` joins the agent binding response with `GET /v1/skills` so
+normalized skill snapshots include the catalog name, description, source,
+tools, workflows, and action-permission metadata. Bindings determine which
+skills the agent can access; catalog membership alone does not grant access.
 
 ## Access Document Mapping
 
@@ -188,4 +214,3 @@ V1 should include:
 - unit tests for response normalization
 - contract tests using recorded Gantry JSON fixtures
 - integration test behind env flag when Gantry is running
-

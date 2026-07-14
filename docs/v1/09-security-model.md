@@ -42,6 +42,16 @@ V1 acceptable implementation:
 - AES-GCM encrypted value
 - encryption key from `CAPCOM_SECRET_KEY`
 
+Implemented V1 details:
+
+- `CAPCOM_SECRET_KEY` is standard base64 encoding of exactly 32 random bytes.
+- Secret values are encrypted with AES-256-GCM before repository writes.
+- The secret name is AES-GCM associated data.
+- Ciphertext includes an internal format version and random nonce.
+- Create and rotate require actor and reason and write append-only audit events.
+- Gantry credentials are resolved immediately before an adapter request and sent as a Bearer token.
+- Secret values, ciphertext, and Authorization headers are never returned by APIs or written to audit metadata.
+
 Manifests reference secrets by name:
 
 ```yaml
@@ -113,4 +123,3 @@ Raw runtime payload storage should redact obvious secret fields.
 | Accidental destructive action | No delete-agent action in V1; require reason and confirmation |
 | Silent mutation | Audit before and after every control action |
 | Runtime drift hidden by outage | Preserve last known state and mark runtime degraded |
-

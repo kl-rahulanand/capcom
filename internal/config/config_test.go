@@ -1,7 +1,11 @@
 package config
 
 import (
+	"bytes"
+	"encoding/base64"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -50,6 +54,8 @@ func TestLoadFromLookupOverrides(t *testing.T) {
 		"CAPCOM_DATABASE_URL":             "postgres://capcom:capcom@localhost:5432/capcom?sslmode=disable",
 		"CAPCOM_DATABASE_MAX_OPEN_CONNS":  "12",
 		"CAPCOM_DATABASE_MAX_IDLE_CONNS":  "6",
+		"CAPCOM_SECRET_KEY":               base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)),
+		"CAPCOM_ADMIN_TOKEN":              "test-admin-token",
 	}
 
 	cfg, err := LoadFromLookup(func(key string) (string, bool) {
@@ -84,6 +90,24 @@ func TestLoadFromLookupOverrides(t *testing.T) {
 	if cfg.LogLevel != slog.LevelDebug {
 		t.Fatalf("log level = %s", cfg.LogLevel)
 	}
+	if len(cfg.Secrets.Key) != 32 {
+		t.Fatalf("secret key length = %d", len(cfg.Secrets.Key))
+	}
+	if cfg.Security.AdminToken != "test-admin-token" {
+		t.Fatal("admin token was not loaded")
+	}
+}
+
+func TestLoadFromLookupRejectsInvalidSecretKey(t *testing.T) {
+	_, err := LoadFromLookup(func(key string) (string, bool) {
+		if key == "CAPCOM_SECRET_KEY" {
+			return base64.StdEncoding.EncodeToString([]byte("too-short")), true
+		}
+		return "", false
+	})
+	if err == nil {
+		t.Fatal("LoadFromLookup returned nil error")
+	}
 }
 
 func TestLoadFromLookupRejectsInvalidDuration(t *testing.T) {
@@ -95,5 +119,42 @@ func TestLoadFromLookupRejectsInvalidDuration(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("LoadFromLookup returned nil error")
+	}
+}
+
+func TestLoadUsesDotEnvAndAllowsOSEnvOverride(t *testing.T) {
+	previousDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	tempDir := t.TempDir()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previousDir); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+
+	dotEnv := []byte("CAPCOM_HTTP_ADDR=:9090\nCAPCOM_SERVICE_VERSION=from-dotenv\nCAPCOM_LOG_LEVEL=warn\n")
+	if err := os.WriteFile(filepath.Join(tempDir, ".env"), dotEnv, 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	t.Setenv("CAPCOM_SERVICE_VERSION", "from-os-env")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.HTTP.Addr != ":9090" {
+		t.Fatalf("HTTP addr = %q, want :9090", cfg.HTTP.Addr)
+	}
+	if cfg.Service.Version != "from-os-env" {
+		t.Fatalf("service version = %q, want OS env override", cfg.Service.Version)
+	}
+	if cfg.LogLevel != slog.LevelWarn {
+		t.Fatalf("log level = %s, want warn", cfg.LogLevel)
 	}
 }

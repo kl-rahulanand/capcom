@@ -38,6 +38,12 @@
 | status | text | `pending`, `active`, `degraded`, `disabled`, `failed` |
 | last_sync_at | timestamptz null | Last successful sync |
 | last_error | text null | Latest failure |
+| sync_enabled | boolean | Enables periodic polling |
+| sync_interval_seconds | integer | Per-runtime polling interval |
+| last_sync_status | text null | Latest run state |
+| last_sync_started_at | timestamptz null | Latest attempt start |
+| last_sync_finished_at | timestamptz null | Latest attempt finish |
+| last_sync_duration_ms | bigint null | Latest attempt duration |
 | created_at | timestamptz |  |
 | updated_at | timestamptz |  |
 
@@ -46,44 +52,125 @@ Indexes:
 - unique `(name)`
 - index `(runtime_type, status)`
 
+### secrets
+
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | Generated identifier |
+| name | text unique | Stable reference used by `runtime_connections.auth_ref` |
+| ciphertext | bytea | Versioned AES-256-GCM payload; never returned by APIs |
+| created_at | timestamptz | Creation time |
+| updated_at | timestamptz | Last rotation time |
+
+The AES key comes from `CAPCOM_SECRET_KEY` and is never stored in Postgres. The
+secret name is authenticated as AES-GCM associated data so ciphertext cannot be
+silently reassigned to a different reference.
+
 ### runtime_sync_runs
 
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid pk |  |
 | runtime_connection_id | uuid fk |  |
-| status | text | `running`, `succeeded`, `failed` |
+| trigger | text | `manual`, `scheduled`, `post_action` |
+| status | text | `running`, `succeeded`, `failed`, `skipped` |
 | started_at | timestamptz |  |
 | finished_at | timestamptz null |  |
 | agents_seen | integer |  |
-| events_seen | integer |  |
-| error | text null |  |
+| skills_seen | integer | Assigned skills observed |
+| bindings_seen | integer | Agent-skill bindings observed |
+| access_documents_seen | integer | Access documents observed |
+| duration_ms | bigint null |  |
+| error_code | text null | Stable failure category |
+| error_message | text null | Sanitized failure detail |
 
-### agents
+### agents and agent_runtime_bindings
 
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid pk | Capcom agent id |
-| runtime_connection_id | uuid fk |  |
-| external_id | text | Gantry agent id |
 | name | text | Runtime display name |
-| runtime_status | text | Latest imported runtime status |
+| status | text | `unknown`, `enabled`, `disabled`, `stale` |
 | owner_business | text null | Desired/metadata |
 | owner_technical | text null | Desired/metadata |
 | escalation_contact | text null | Desired/metadata |
 | purpose | text null | Desired/metadata |
 | environment | text null | Desired/metadata |
 | risk_level | text | `low`, `medium`, `high`, `critical` |
-| first_seen_at | timestamptz |  |
-| last_seen_at | timestamptz |  |
 | created_at | timestamptz |  |
 | updated_at | timestamptz |  |
 
 Indexes:
 
-- unique `(runtime_connection_id, external_id)`
-- index `(runtime_status)`
+- index `(status)`
 - index `(risk_level)`
+
+Runtime identity and observation state live in `agent_runtime_bindings`:
+
+| Column | Type | Notes |
+|---|---|---|
+| agent_id | uuid fk | Capcom agent id |
+| runtime_connection_id | uuid fk | Source runtime |
+| runtime_agent_id | text | Stable runtime identity |
+| kind | text | `main`, `registered`, `subagent` |
+| parent_runtime_agent_id | text null | Runtime parent reference |
+| last_seen_at | timestamptz null | Last successful observation |
+| last_seen_sync_run_id | uuid fk null | Sync provenance |
+| missing_successful_syncs | integer | Consecutive successful absences |
+| raw_runtime_json | jsonb | Debug/audit payload |
+
+Unique key: `(runtime_connection_id, runtime_agent_id)`.
+
+`registered` means a durable runtime agent without a parent relationship. Capcom
+must not infer `subagent` merely because an agent is not the main agent. When an
+adapter cannot read hierarchy, `parent_external_id` remains null and the runtime
+capability reports hierarchy as unsupported.
+
+### runtime_skills and agent_skill_bindings
+
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk |  |
+| runtime_connection_id | uuid fk | Source runtime |
+| runtime_skill_id | text | Stable runtime skill identifier |
+| name | text | Runtime display name or identifier fallback |
+| status | text | Current binding status |
+| version | text null | Runtime config/version reference |
+| metadata_json | jsonb | Adapter-normalized metadata |
+| tool_ids_json | jsonb | Normalized tool references |
+| workflow_refs_json | jsonb | Normalized workflow references |
+| observed_at | timestamptz | Last successful observation |
+| last_seen_sync_run_id | uuid fk null | Sync provenance |
+| missing_successful_syncs | integer | Consecutive successful absences |
+
+Unique key: `(runtime_connection_id, runtime_skill_id)`.
+
+`agent_skill_bindings` links agents to `runtime_skills` and stores binding
+status, observation time, sync provenance, and missing counters. Missing skills
+or bindings are marked stale after repeated complete successful snapshots; they
+are not hard-deleted.
+
+Ephemeral subagent/delegation executions are not stored in this table or as
+durable agents. They are stored separately in `subagent_executions` when an
+adapter exposes delegated task lifecycle events.
+
+### subagent_executions
+
+| Column | Type | Notes |
+|---|---|---|
+| runtime_connection_id | uuid fk | Source runtime |
+| runtime_execution_id | text | Stable delegated task id |
+| parent_run_id | text | Runtime run that created the task |
+| runtime_agent_id | text | Owning durable runtime agent, when resolvable |
+| subagent_type | text | Runtime-reported execution role/type |
+| status | text | Latest lifecycle status |
+| description, summary | text | Bounded runtime task context |
+| started_at, ended_at | timestamptz null | Lifecycle timestamps |
+| observed_at | timestamptz | Last successful observation |
+| metadata_json, raw_runtime_json | jsonb | Normalized metadata and audit/debug payload |
+
+Unique key: `(runtime_connection_id, runtime_execution_id)`. These observations
+never create rows in `agents` or `agent_runtime_bindings`.
 
 ### agent_desired_states
 
@@ -106,7 +193,7 @@ Indexes:
 - unique `(agent_id)`
 - gin `(desired_access_json)`
 
-### agent_actual_states
+### access_actual_state
 
 | Column | Type | Notes |
 |---|---|---|
@@ -118,6 +205,8 @@ Indexes:
 | inventory_refs_json | jsonb | Referenced capabilities/sources |
 | raw_runtime_json | jsonb | Raw payload for debugging |
 | observed_at | timestamptz |  |
+| last_seen_sync_run_id | uuid fk null | Sync provenance |
+| freshness_status | text | `live`, `cached`, `stale` |
 
 Indexes:
 
@@ -212,4 +301,3 @@ Use JSONB for runtime-specific or frequently changing payloads:
 - `drift_records.actual_json`
 
 Do not put core query fields only in JSON. Runtime status, risk, mode, and timestamps should be typed columns.
-

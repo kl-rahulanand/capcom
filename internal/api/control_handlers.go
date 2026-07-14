@@ -1,0 +1,50 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"capcom/internal/domain"
+	"capcom/internal/services"
+)
+
+type reconcileAccessRequest struct {
+	Selections     []runtimeAccessSelection `json:"selections"`
+	Actor          string                   `json:"actor"`
+	Reason         string                   `json:"reason"`
+	IdempotencyKey string                   `json:"idempotency_key"`
+	DryRun         bool                     `json:"dry_run"`
+}
+
+func handleReconcileAgentAccess(cfg RouterConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ControlActions == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "control_actions_not_configured"})
+			return
+		}
+		var req reconcileAccessRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid_json"})
+			return
+		}
+		selections := make([]domain.AccessSelection, 0, len(req.Selections))
+		for _, item := range req.Selections {
+			selections = append(selections, domain.AccessSelection{Kind: item.Kind, ID: item.ID, Name: item.Name, Allowed: item.Allowed, Attributes: item.Attributes})
+		}
+		action, err := cfg.ControlActions.ReconcileAccess(r.Context(), services.ReconcileAccessInput{
+			AgentID: r.PathValue("id"), Access: domain.AccessDocument{Selections: selections, Source: "capcom"},
+			Actor: req.Actor, Reason: req.Reason, IdempotencyKey: req.IdempotencyKey, DryRun: req.DryRun,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "action": controlActionResponse(action)})
+			return
+		}
+		writeJSON(w, http.StatusOK, controlActionResponse(action))
+	}
+}
+
+func controlActionResponse(action domain.ControlAction) map[string]any {
+	return map[string]any{"id": action.ID, "runtime_connection_id": action.RuntimeConnectionID, "agent_id": action.AgentID,
+		"action_type": action.Type, "status": action.Status, "actor": action.Actor, "reason": action.Reason,
+		"idempotency_key": action.IdempotencyKey, "result": action.Result, "created_at": action.CreatedAt, "updated_at": action.UpdatedAt}
+}

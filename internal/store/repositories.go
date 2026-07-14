@@ -24,6 +24,10 @@ type AuditRepository struct {
 	db *sql.DB
 }
 
+type SecretRepository struct {
+	db *sql.DB
+}
+
 func NewRuntimeConnectionRepository(db *sql.DB) RuntimeConnectionRepository {
 	return RuntimeConnectionRepository{db: db}
 }
@@ -34,6 +38,51 @@ func NewAgentRepository(db *sql.DB) AgentRepository {
 
 func NewAuditRepository(db *sql.DB) AuditRepository {
 	return AuditRepository{db: db}
+}
+
+func NewSecretRepository(db *sql.DB) SecretRepository {
+	return SecretRepository{db: db}
+}
+
+func (r SecretRepository) Create(ctx context.Context, secret domain.Secret, ciphertext []byte) (domain.Secret, error) {
+	if secret.ID == "" {
+		id, err := newID()
+		if err != nil {
+			return domain.Secret{}, err
+		}
+		secret.ID = id
+	}
+	now := time.Now().UTC()
+	secret.CreatedAt = now
+	secret.UpdatedAt = now
+	if _, err := r.db.ExecContext(ctx, `
+INSERT INTO secrets (id, name, ciphertext, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5)`, secret.ID, secret.Name, ciphertext, secret.CreatedAt, secret.UpdatedAt); err != nil {
+		return domain.Secret{}, fmt.Errorf("create secret: %w", err)
+	}
+	return secret, nil
+}
+
+func (r SecretRepository) Rotate(ctx context.Context, name string, ciphertext []byte) (domain.Secret, error) {
+	var secret domain.Secret
+	if err := r.db.QueryRowContext(ctx, `
+UPDATE secrets
+SET ciphertext = $2, updated_at = now()
+WHERE name = $1
+RETURNING id, name, created_at, updated_at`, name, ciphertext).Scan(
+		&secret.ID, &secret.Name, &secret.CreatedAt, &secret.UpdatedAt,
+	); err != nil {
+		return domain.Secret{}, fmt.Errorf("rotate secret: %w", err)
+	}
+	return secret, nil
+}
+
+func (r SecretRepository) GetCiphertext(ctx context.Context, name string) ([]byte, error) {
+	var ciphertext []byte
+	if err := r.db.QueryRowContext(ctx, `SELECT ciphertext FROM secrets WHERE name = $1`, name).Scan(&ciphertext); err != nil {
+		return nil, fmt.Errorf("get secret ciphertext: %w", err)
+	}
+	return ciphertext, nil
 }
 
 func (r AuditRepository) Create(ctx context.Context, event domain.AuditEvent) (domain.AuditEvent, error) {
@@ -99,9 +148,9 @@ func (r RuntimeConnectionRepository) Create(ctx context.Context, conn domain.Run
 
 	if _, err := r.db.ExecContext(ctx, `
 INSERT INTO runtime_connections (
-	id, name, runtime_type, mode, status, endpoint, metadata_json, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, $7, $8)`,
-		conn.ID, conn.Name, conn.Kind, conn.Mode, conn.Status, conn.BaseURL, conn.CreatedAt, conn.UpdatedAt); err != nil {
+	id, name, runtime_type, mode, status, endpoint, auth_ref, metadata_json, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), '{}'::jsonb, $8, $9)`,
+		conn.ID, conn.Name, conn.Kind, conn.Mode, conn.Status, conn.BaseURL, conn.AuthRef, conn.CreatedAt, conn.UpdatedAt); err != nil {
 		return domain.RuntimeConnection{}, fmt.Errorf("create runtime connection: %w", err)
 	}
 	return conn, nil
@@ -109,9 +158,12 @@ INSERT INTO runtime_connections (
 
 func (r RuntimeConnectionRepository) Get(ctx context.Context, id string) (domain.RuntimeConnection, error) {
 	var conn domain.RuntimeConnection
-	var lastSyncedAt sql.NullTime
+	var lastSyncedAt, lastSyncStartedAt, lastSyncFinishedAt sql.NullTime
+	var lastSyncStatus, lastError sql.NullString
 	if err := r.db.QueryRowContext(ctx, `
-SELECT id, name, runtime_type, mode, status, endpoint, created_at, updated_at, last_sync_at
+SELECT id, name, runtime_type, mode, status, endpoint, COALESCE(auth_ref, ''), created_at, updated_at, last_sync_at,
+sync_enabled, sync_interval_seconds, last_sync_status, last_sync_started_at, last_sync_finished_at,
+COALESCE(last_sync_duration_ms,0), last_error
 FROM runtime_connections
 WHERE id = $1`, id).Scan(
 		&conn.ID,
@@ -120,21 +172,43 @@ WHERE id = $1`, id).Scan(
 		&conn.Mode,
 		&conn.Status,
 		&conn.BaseURL,
+		&conn.AuthRef,
 		&conn.CreatedAt,
 		&conn.UpdatedAt,
 		&lastSyncedAt,
+		&conn.SyncEnabled,
+		&conn.SyncIntervalSeconds,
+		&lastSyncStatus,
+		&lastSyncStartedAt,
+		&lastSyncFinishedAt,
+		&conn.LastSyncDurationMS,
+		&lastError,
 	); err != nil {
 		return domain.RuntimeConnection{}, fmt.Errorf("get runtime connection: %w", err)
 	}
 	if lastSyncedAt.Valid {
 		conn.LastSyncedAt = &lastSyncedAt.Time
 	}
+	if lastSyncStartedAt.Valid {
+		conn.LastSyncStartedAt = &lastSyncStartedAt.Time
+	}
+	if lastSyncFinishedAt.Valid {
+		conn.LastSyncFinishedAt = &lastSyncFinishedAt.Time
+	}
+	if lastSyncStatus.Valid {
+		conn.LastSyncStatus = domain.SyncStatus(lastSyncStatus.String)
+	}
+	if lastError.Valid {
+		conn.LastError = lastError.String
+	}
 	return conn, nil
 }
 
 func (r RuntimeConnectionRepository) List(ctx context.Context) ([]domain.RuntimeConnection, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, runtime_type, mode, status, endpoint, created_at, updated_at, last_sync_at
+SELECT id, name, runtime_type, mode, status, endpoint, COALESCE(auth_ref, ''), created_at, updated_at, last_sync_at,
+sync_enabled, sync_interval_seconds, last_sync_status, last_sync_started_at, last_sync_finished_at,
+COALESCE(last_sync_duration_ms,0), last_error
 FROM runtime_connections
 ORDER BY name`)
 	if err != nil {
@@ -145,7 +219,8 @@ ORDER BY name`)
 	var conns []domain.RuntimeConnection
 	for rows.Next() {
 		var conn domain.RuntimeConnection
-		var lastSyncedAt sql.NullTime
+		var lastSyncedAt, lastSyncStartedAt, lastSyncFinishedAt sql.NullTime
+		var lastSyncStatus, lastError sql.NullString
 		if err := rows.Scan(
 			&conn.ID,
 			&conn.Name,
@@ -153,14 +228,34 @@ ORDER BY name`)
 			&conn.Mode,
 			&conn.Status,
 			&conn.BaseURL,
+			&conn.AuthRef,
 			&conn.CreatedAt,
 			&conn.UpdatedAt,
 			&lastSyncedAt,
+			&conn.SyncEnabled,
+			&conn.SyncIntervalSeconds,
+			&lastSyncStatus,
+			&lastSyncStartedAt,
+			&lastSyncFinishedAt,
+			&conn.LastSyncDurationMS,
+			&lastError,
 		); err != nil {
 			return nil, fmt.Errorf("scan runtime connection: %w", err)
 		}
 		if lastSyncedAt.Valid {
 			conn.LastSyncedAt = &lastSyncedAt.Time
+		}
+		if lastSyncStartedAt.Valid {
+			conn.LastSyncStartedAt = &lastSyncStartedAt.Time
+		}
+		if lastSyncFinishedAt.Valid {
+			conn.LastSyncFinishedAt = &lastSyncFinishedAt.Time
+		}
+		if lastSyncStatus.Valid {
+			conn.LastSyncStatus = domain.SyncStatus(lastSyncStatus.String)
+		}
+		if lastError.Valid {
+			conn.LastError = lastError.String
 		}
 		conns = append(conns, conn)
 	}

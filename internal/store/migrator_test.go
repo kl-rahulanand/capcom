@@ -19,4 +19,10 @@ func TestLoadMigrations(t *testing.T) {
 	if !strings.Contains(migrations[0].SQL, "CREATE TABLE IF NOT EXISTS runtime_connections") {
 		t.Fatal("initial migration does not create runtime_connections")
 	}
+	if len(migrations) < 2 || !strings.Contains(migrations[1].SQL, "CREATE TABLE IF NOT EXISTS secrets") {
+		t.Fatal("secret storage migration is missing")
+	}
+	if len(migrations) < 3 || !strings.Contains(migrations[2].SQL, "CREATE TABLE IF NOT EXISTS runtime_sync_runs") {
+		t.Fatal("runtime sync migration is missing")
+	}
 }
