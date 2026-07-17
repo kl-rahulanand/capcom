@@ -19,6 +19,7 @@ import (
 type RouterConfig struct {
 	Version            string
 	AdminToken         string
+	AllowedOrigins     []string
 	RuntimeConnections RuntimeConnectionService
 	Secrets            SecretService
 	RuntimeSync        RuntimeSyncService
@@ -40,6 +41,7 @@ type RuntimeSyncService interface {
 
 type RuntimeConnectionService interface {
 	Create(ctx context.Context, input services.CreateRuntimeConnectionInput) (domain.RuntimeConnection, error)
+	UpdateIdentity(ctx context.Context, input services.UpdateRuntimeInstanceIdentityInput) (domain.RuntimeConnection, error)
 	Get(ctx context.Context, id string) (domain.RuntimeConnection, error)
 	List(ctx context.Context) ([]domain.RuntimeConnection, error)
 	Test(ctx context.Context, id string) (*runtimeadapter.CheckResult, error)
@@ -74,6 +76,7 @@ func NewRouter(cfg RouterConfig, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("POST /v1/runtime-connections", handleCreateRuntimeConnection(cfg))
 	mux.HandleFunc("GET /v1/runtime-connections", handleListRuntimeConnections(cfg))
 	mux.HandleFunc("GET /v1/runtime-connections/{id}", handleGetRuntimeConnection(cfg))
+	mux.HandleFunc("PATCH /v1/runtime-connections/{id}", handleUpdateRuntimeInstanceIdentity(cfg))
 	mux.HandleFunc("POST /v1/runtime-connections/{id}/test", handleTestRuntimeConnection(cfg))
 	mux.HandleFunc("GET /v1/runtime-connections/{id}/agents", handleListRuntimeAgents(cfg))
 	mux.HandleFunc("GET /v1/runtime-connections/{id}/agents/{agentID}/skills", handleListRuntimeAgentSkills(cfg))
@@ -86,10 +89,24 @@ func NewRouter(cfg RouterConfig, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /v1/agents/{id}/skills", handleGetPersistedAgentSkills(cfg))
 	mux.HandleFunc("GET /v1/agents/{id}/access", handleGetPersistedAgentAccess(cfg))
 	mux.HandleFunc("GET /v1/subagent-executions", handleListSubagentExecutions(cfg))
+	// Runtime instances are the user-facing connection boundary. The older
+	// runtime-connections routes remain available for compatibility.
+	mux.HandleFunc("POST /v1/runtime-instances", handleCreateRuntimeConnection(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances", handleListRuntimeConnections(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}", handleGetRuntimeConnection(cfg))
+	mux.HandleFunc("PATCH /v1/runtime-instances/{id}", handleUpdateRuntimeInstanceIdentity(cfg))
+	mux.HandleFunc("POST /v1/runtime-instances/{id}/test", handleTestRuntimeConnection(cfg))
+	mux.HandleFunc("POST /v1/runtime-instances/{id}/sync", handleSyncRuntime(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}/sync-runs", handleListSyncRuns(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}/agents", handleListInstanceAgents(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}/subagent-executions", handleListInstanceSubagentExecutions(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}/live/agents", handleListRuntimeAgents(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}/live/agents/{agentID}/skills", handleListRuntimeAgentSkills(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}/live/agents/{agentID}/access", handleGetRuntimeAgentAccess(cfg))
 	mux.HandleFunc("POST /v1/agents/{id}/actions/reconcile-access", handleReconcileAgentAccess(cfg))
 	mux.HandleFunc("/", handleNotFound)
 
-	return requestLogger(adminAuth(mux, cfg.AdminToken), logger)
+	return requestLogger(corsMiddleware(adminAuth(mux, cfg.AdminToken), cfg.AllowedOrigins), logger)
 }
 
 func serveConsole(ui fs.FS) http.HandlerFunc {
@@ -183,6 +200,9 @@ func handleCreateRuntimeConnection(cfg RouterConfig) http.HandlerFunc {
 
 		conn, err := cfg.RuntimeConnections.Create(r.Context(), services.CreateRuntimeConnectionInput{
 			Name:        req.Name,
+			DisplayName: req.DisplayName,
+			Environment: req.Environment,
+			Labels:      req.Labels,
 			Kind:        domain.RuntimeKind(req.RuntimeType),
 			Mode:        domain.RuntimeMode(req.Mode),
 			Endpoint:    req.Endpoint,
@@ -238,6 +258,30 @@ func handleGetRuntimeConnection(cfg RouterConfig) http.HandlerFunc {
 			return
 		}
 
+		writeJSON(w, http.StatusOK, runtimeConnectionResponseFromDomain(conn))
+	}
+}
+
+func handleUpdateRuntimeInstanceIdentity(cfg RouterConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cfg.RuntimeConnections == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "database_not_configured"})
+			return
+		}
+		var req updateRuntimeInstanceIdentityRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid_json"})
+			return
+		}
+		conn, err := cfg.RuntimeConnections.UpdateIdentity(r.Context(), services.UpdateRuntimeInstanceIdentityInput{ID: r.PathValue("id"), DisplayName: req.DisplayName, Environment: req.Environment, Labels: req.Labels, Actor: req.Actor, Reason: req.Reason})
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, sql.ErrNoRows) {
+				status = http.StatusNotFound
+			}
+			writeJSON(w, status, errorResponse{Error: err.Error()})
+			return
+		}
 		writeJSON(w, http.StatusOK, runtimeConnectionResponseFromDomain(conn))
 	}
 }
@@ -352,14 +396,25 @@ type errorResponse struct {
 }
 
 type createRuntimeConnectionRequest struct {
-	Name        string `json:"name"`
-	RuntimeType string `json:"runtime_type"`
-	Mode        string `json:"mode"`
-	Endpoint    string `json:"endpoint"`
-	Actor       string `json:"actor"`
-	Reason      string `json:"reason"`
-	Description string `json:"description"`
-	AuthRef     string `json:"auth_ref"`
+	Name        string            `json:"name"`
+	DisplayName string            `json:"display_name"`
+	Environment string            `json:"environment"`
+	Labels      map[string]string `json:"labels"`
+	RuntimeType string            `json:"runtime_type"`
+	Mode        string            `json:"mode"`
+	Endpoint    string            `json:"endpoint"`
+	Actor       string            `json:"actor"`
+	Reason      string            `json:"reason"`
+	Description string            `json:"description"`
+	AuthRef     string            `json:"auth_ref"`
+}
+
+type updateRuntimeInstanceIdentityRequest struct {
+	DisplayName string            `json:"display_name"`
+	Environment string            `json:"environment"`
+	Labels      map[string]string `json:"labels"`
+	Actor       string            `json:"actor"`
+	Reason      string            `json:"reason"`
 }
 
 type storeSecretRequest struct {
@@ -377,23 +432,27 @@ type secretResponse struct {
 }
 
 type runtimeConnectionResponse struct {
-	ID                  string  `json:"id"`
-	Name                string  `json:"name"`
-	RuntimeType         string  `json:"runtime_type"`
-	Mode                string  `json:"mode"`
-	Status              string  `json:"status"`
-	Endpoint            string  `json:"endpoint"`
-	AuthRef             string  `json:"auth_ref"`
-	LastSyncedAt        *string `json:"last_synced_at,omitempty"`
-	CreatedAt           string  `json:"created_at"`
-	UpdatedAt           string  `json:"updated_at"`
-	SyncEnabled         bool    `json:"sync_enabled"`
-	SyncIntervalSeconds int     `json:"sync_interval_seconds"`
-	LastSyncStatus      string  `json:"last_sync_status,omitempty"`
-	LastSyncStartedAt   *string `json:"last_sync_started_at,omitempty"`
-	LastSyncFinishedAt  *string `json:"last_sync_finished_at,omitempty"`
-	LastSyncDurationMS  int64   `json:"last_sync_duration_ms,omitempty"`
-	LastError           string  `json:"last_error,omitempty"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	DisplayName         string            `json:"display_name"`
+	Environment         string            `json:"environment"`
+	Labels              map[string]string `json:"labels"`
+	Description         string            `json:"description,omitempty"`
+	RuntimeType         string            `json:"runtime_type"`
+	Mode                string            `json:"mode"`
+	Status              string            `json:"status"`
+	Endpoint            string            `json:"endpoint"`
+	AuthRef             string            `json:"auth_ref"`
+	LastSyncedAt        *string           `json:"last_synced_at,omitempty"`
+	CreatedAt           string            `json:"created_at"`
+	UpdatedAt           string            `json:"updated_at"`
+	SyncEnabled         bool              `json:"sync_enabled"`
+	SyncIntervalSeconds int               `json:"sync_interval_seconds"`
+	LastSyncStatus      string            `json:"last_sync_status,omitempty"`
+	LastSyncStartedAt   *string           `json:"last_sync_started_at,omitempty"`
+	LastSyncFinishedAt  *string           `json:"last_sync_finished_at,omitempty"`
+	LastSyncDurationMS  int64             `json:"last_sync_duration_ms,omitempty"`
+	LastError           string            `json:"last_error,omitempty"`
 }
 
 type runtimeConnectionTestResponse struct {
@@ -460,6 +519,10 @@ func runtimeConnectionResponseFromDomain(conn domain.RuntimeConnection) runtimeC
 	return runtimeConnectionResponse{
 		ID:                  conn.ID,
 		Name:                conn.Name,
+		DisplayName:         conn.DisplayName,
+		Environment:         conn.Environment,
+		Labels:              conn.Labels,
+		Description:         mapValue(conn.Metadata, "description"),
 		RuntimeType:         string(conn.Kind),
 		Mode:                string(conn.Mode),
 		Status:              string(conn.Status),
@@ -476,6 +539,11 @@ func runtimeConnectionResponseFromDomain(conn domain.RuntimeConnection) runtimeC
 		LastSyncDurationMS:  conn.LastSyncDurationMS,
 		LastError:           conn.LastError,
 	}
+}
+
+func mapValue(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return value
 }
 
 func secretResponseFromDomain(secret domain.Secret) secretResponse {

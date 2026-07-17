@@ -145,34 +145,74 @@ func (r RuntimeConnectionRepository) Create(ctx context.Context, conn domain.Run
 	now := time.Now().UTC()
 	conn.CreatedAt = now
 	conn.UpdatedAt = now
+	if conn.DisplayName == "" {
+		conn.DisplayName = conn.Name
+	}
+	if conn.Environment == "" {
+		conn.Environment = "unspecified"
+	}
+	if conn.Labels == nil {
+		conn.Labels = map[string]string{}
+	}
+	if conn.Metadata == nil {
+		conn.Metadata = map[string]any{}
+	}
+	metadata, err := json.Marshal(conn.Metadata)
+	if err != nil {
+		return domain.RuntimeConnection{}, fmt.Errorf("marshal runtime metadata: %w", err)
+	}
+	labels, err := json.Marshal(conn.Labels)
+	if err != nil {
+		return domain.RuntimeConnection{}, fmt.Errorf("marshal runtime labels: %w", err)
+	}
 
 	if _, err := r.db.ExecContext(ctx, `
 INSERT INTO runtime_connections (
-	id, name, runtime_type, mode, status, endpoint, auth_ref, metadata_json, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), '{}'::jsonb, $8, $9)`,
-		conn.ID, conn.Name, conn.Kind, conn.Mode, conn.Status, conn.BaseURL, conn.AuthRef, conn.CreatedAt, conn.UpdatedAt); err != nil {
+	id, name, display_name, environment, runtime_type, mode, status, endpoint, auth_ref,
+	metadata_json, labels_json, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), $10::jsonb, $11::jsonb, $12, $13)`,
+		conn.ID, conn.Name, conn.DisplayName, conn.Environment, conn.Kind, conn.Mode, conn.Status,
+		conn.BaseURL, conn.AuthRef, string(metadata), string(labels), conn.CreatedAt, conn.UpdatedAt); err != nil {
 		return domain.RuntimeConnection{}, fmt.Errorf("create runtime connection: %w", err)
 	}
 	return conn, nil
+}
+
+func (r RuntimeConnectionRepository) UpdateIdentity(ctx context.Context, conn domain.RuntimeConnection) (domain.RuntimeConnection, error) {
+	labels, err := json.Marshal(conn.Labels)
+	if err != nil {
+		return domain.RuntimeConnection{}, fmt.Errorf("marshal runtime labels: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `UPDATE runtime_connections SET display_name=$2, environment=$3,
+labels_json=$4::jsonb, updated_at=now() WHERE id=$1`, conn.ID, conn.DisplayName, conn.Environment, string(labels)); err != nil {
+		return domain.RuntimeConnection{}, fmt.Errorf("update runtime instance identity: %w", err)
+	}
+	return r.Get(ctx, conn.ID)
 }
 
 func (r RuntimeConnectionRepository) Get(ctx context.Context, id string) (domain.RuntimeConnection, error) {
 	var conn domain.RuntimeConnection
 	var lastSyncedAt, lastSyncStartedAt, lastSyncFinishedAt sql.NullTime
 	var lastSyncStatus, lastError sql.NullString
+	var metadata, labels []byte
 	if err := r.db.QueryRowContext(ctx, `
-SELECT id, name, runtime_type, mode, status, endpoint, COALESCE(auth_ref, ''), created_at, updated_at, last_sync_at,
+SELECT id, name, display_name, environment, runtime_type, mode, status, endpoint, COALESCE(auth_ref, ''),
+metadata_json, labels_json, created_at, updated_at, last_sync_at,
 sync_enabled, sync_interval_seconds, last_sync_status, last_sync_started_at, last_sync_finished_at,
 COALESCE(last_sync_duration_ms,0), last_error
 FROM runtime_connections
 WHERE id = $1`, id).Scan(
 		&conn.ID,
 		&conn.Name,
+		&conn.DisplayName,
+		&conn.Environment,
 		&conn.Kind,
 		&conn.Mode,
 		&conn.Status,
 		&conn.BaseURL,
 		&conn.AuthRef,
+		&metadata,
+		&labels,
 		&conn.CreatedAt,
 		&conn.UpdatedAt,
 		&lastSyncedAt,
@@ -201,12 +241,19 @@ WHERE id = $1`, id).Scan(
 	if lastError.Valid {
 		conn.LastError = lastError.String
 	}
+	if err := json.Unmarshal(metadata, &conn.Metadata); err != nil {
+		return domain.RuntimeConnection{}, fmt.Errorf("decode runtime metadata: %w", err)
+	}
+	if err := json.Unmarshal(labels, &conn.Labels); err != nil {
+		return domain.RuntimeConnection{}, fmt.Errorf("decode runtime labels: %w", err)
+	}
 	return conn, nil
 }
 
 func (r RuntimeConnectionRepository) List(ctx context.Context) ([]domain.RuntimeConnection, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, runtime_type, mode, status, endpoint, COALESCE(auth_ref, ''), created_at, updated_at, last_sync_at,
+SELECT id, name, display_name, environment, runtime_type, mode, status, endpoint, COALESCE(auth_ref, ''),
+metadata_json, labels_json, created_at, updated_at, last_sync_at,
 sync_enabled, sync_interval_seconds, last_sync_status, last_sync_started_at, last_sync_finished_at,
 COALESCE(last_sync_duration_ms,0), last_error
 FROM runtime_connections
@@ -221,14 +268,19 @@ ORDER BY name`)
 		var conn domain.RuntimeConnection
 		var lastSyncedAt, lastSyncStartedAt, lastSyncFinishedAt sql.NullTime
 		var lastSyncStatus, lastError sql.NullString
+		var metadata, labels []byte
 		if err := rows.Scan(
 			&conn.ID,
 			&conn.Name,
+			&conn.DisplayName,
+			&conn.Environment,
 			&conn.Kind,
 			&conn.Mode,
 			&conn.Status,
 			&conn.BaseURL,
 			&conn.AuthRef,
+			&metadata,
+			&labels,
 			&conn.CreatedAt,
 			&conn.UpdatedAt,
 			&lastSyncedAt,
@@ -256,6 +308,12 @@ ORDER BY name`)
 		}
 		if lastError.Valid {
 			conn.LastError = lastError.String
+		}
+		if err := json.Unmarshal(metadata, &conn.Metadata); err != nil {
+			return nil, fmt.Errorf("decode runtime metadata: %w", err)
+		}
+		if err := json.Unmarshal(labels, &conn.Labels); err != nil {
+			return nil, fmt.Errorf("decode runtime labels: %w", err)
 		}
 		conns = append(conns, conn)
 	}

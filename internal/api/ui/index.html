@@ -24,9 +24,9 @@
     <main>
       <header class="topbar">
         <button class="icon-button menu-button" id="menuButton" title="Open navigation" aria-label="Open navigation">☰</button>
-        <div><div class="eyebrow">CONTROL PLANE</div><h1 id="viewTitle">Overview</h1></div>
+        <div><div class="eyebrow" id="contextEyebrow">CONTROL PLANE</div><h1 id="viewTitle">Overview</h1></div>
         <div class="topbar-actions">
-          <label class="runtime-picker"><span>Runtime</span><select id="runtimeSelect" aria-label="Selected runtime"></select></label>
+          <label class="runtime-picker"><span>Instance</span><select id="runtimeSelect" aria-label="Selected runtime instance"></select></label>
           <button class="icon-button" id="refreshButton" title="Refresh data" aria-label="Refresh data">↻</button>
         </div>
       </header>
@@ -38,9 +38,9 @@
           <article class="metric"><span>IMPORTED AGENTS</span><strong id="metricAgents">-</strong><small>Persisted runtime state</small></article>
           <article class="metric"><span>ADAPTER</span><strong id="metricAdapter">—</strong><small id="metricMode">No runtime selected</small></article>
         </div>
-        <div class="section-heading"><div><span class="eyebrow">SELECTED RUNTIME</span><h2>Runtime state</h2></div><div class="filter-row"><button class="secondary-button" id="testAdapterButton">Test connection</button><button class="primary-button" id="syncNowButton">Sync now</button></div></div>
+        <div class="section-heading"><div><span class="eyebrow">SELECTED INSTANCE</span><h2>Instance state</h2></div><div class="filter-row"><button class="secondary-button" id="testAdapterButton">Test connection</button><button class="primary-button" id="syncNowButton">Sync now</button></div></div>
         <div class="verification-panel">
-          <div class="runtime-identity"><span class="runtime-logo">G</span><div><h3 id="selectedRuntimeName">No runtime selected</h3><p id="selectedRuntimeEndpoint">Add or select a runtime connection</p></div></div>
+          <div class="runtime-identity"><span class="runtime-logo">G</span><div><div class="identity-heading"><h3 id="selectedRuntimeName">No instance selected</h3><span class="environment-tag" id="selectedRuntimeEnvironment">-</span></div><p id="selectedRuntimeEndpoint">Add or select a runtime instance</p><small id="selectedRuntimeKey"></small></div></div>
           <div class="verification-status" id="verificationStatus"><span class="status-dot neutral"></span><span><strong>Not tested</strong><small>Run a live adapter check</small></span></div>
           <div class="capabilities" id="capabilities"></div>
         </div>
@@ -48,11 +48,12 @@
         <div class="table-wrap"><table><thead><tr><th>Agent</th><th>Type</th><th>Status</th><th>Freshness</th><th>Description</th></tr></thead><tbody id="overviewAgents"></tbody></table></div>
       </section>
       <section class="view" id="runtimesView">
-        <div class="section-heading"><div><span class="eyebrow">ADAPTER REGISTRY</span><h2>Runtime connections</h2></div><span class="count-label" id="runtimeCount">0 connections</span></div>
+        <div class="section-heading"><div><span class="eyebrow">INSTANCE REGISTRY</span><h2>Runtime instances</h2></div><span class="count-label" id="runtimeCount">0 instances</span></div>
         <div class="runtime-list" id="runtimeList"></div>
       </section>
       <section class="view" id="agentsView">
-        <div class="section-heading"><div><span class="eyebrow">DURABLE RUNTIME STATE</span><h2>Agents</h2></div><div class="filter-row"><input id="agentSearch" type="search" placeholder="Search agents" aria-label="Search agents"><span class="count-label" id="agentCount">0 agents</span></div></div>
+        <div class="instance-context" id="agentInstanceContext"></div>
+        <div class="section-heading"><div><span class="eyebrow">DURABLE INSTANCE STATE</span><h2>Agents</h2></div><div class="filter-row"><input id="agentSearch" type="search" placeholder="Search agents" aria-label="Search agents"><span class="count-label" id="agentCount">0 agents</span></div></div>
         <div class="table-wrap"><table><thead><tr><th>Agent</th><th>Type</th><th>Runtime ID</th><th>Status</th><th>Freshness</th><th>Description</th><th>Details</th></tr></thead><tbody id="agentTable"></tbody></table></div>
         <div class="section-heading compact"><div><span class="eyebrow">EPHEMERAL RUNTIME ACTIVITY</span><h2>Subagent executions</h2></div><span class="count-label" id="subagentExecutionCount">0 executions</span></div>
         <div class="table-wrap"><table><thead><tr><th>Subagent</th><th>Owner</th><th>Status</th><th>Parent run</th><th>Task</th><th>Observed</th></tr></thead><tbody id="subagentExecutionTable"></tbody></table></div>

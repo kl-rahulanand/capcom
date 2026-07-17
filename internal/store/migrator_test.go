@@ -25,4 +25,7 @@ func TestLoadMigrations(t *testing.T) {
 	if len(migrations) < 3 || !strings.Contains(migrations[2].SQL, "CREATE TABLE IF NOT EXISTS runtime_sync_runs") {
 		t.Fatal("runtime sync migration is missing")
 	}
+	if len(migrations) < 5 || !strings.Contains(migrations[4].SQL, "ADD COLUMN IF NOT EXISTS display_name") {
+		t.Fatal("runtime instance identity migration is missing")
+	}
 }

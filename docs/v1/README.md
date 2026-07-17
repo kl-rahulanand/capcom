@@ -35,6 +35,7 @@ The product is not an observability dashboard or a new agent runtime. Gantry run
 | 12 | `12-go-coding-rulebook.md` | Go-specific coding practices for agents and engineers |
 | 13 | `13-execution-implementation-plan.md` | Execution sequence, task breakdown, and acceptance gates |
 | 14 | `14-durable-runtime-sync-and-access-control-plan.md` | Detailed plan for durable sync, stale-state handling, worker scheduling, and audited access control |
+| 15 | `15-multi-runtime-instances.md` | Multi-instance identity, isolation, API hierarchy, and console contract |
 
 ## V1 Decisions
 
