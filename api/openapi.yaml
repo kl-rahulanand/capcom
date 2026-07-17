@@ -2,7 +2,14 @@ openapi: 3.1.0
 info:
   title: Capcom API
   version: 0.1.0
-  description: Runtime-agnostic AgentOps control-plane API.
+  description: |
+    Runtime-agnostic AgentOps control-plane API.
+
+    All `/v1/*` endpoints require `Authorization: Bearer <CAPCOM_ADMIN_TOKEN>`; only
+    `GET /healthz` is unauthenticated. Browser clients on a different origin (the Next.js
+    console) are supported via CORS: the allowed origins are configured with
+    `CAPCOM_CORS_ALLOWED_ORIGINS` (default `http://localhost:3000,http://127.0.0.1:3000`),
+    and preflight `OPTIONS` requests return `204` without requiring admin auth.
 servers:
   - url: http://127.0.0.1:8080
 security:
