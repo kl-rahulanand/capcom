@@ -1,0 +1,8 @@
+.git
+web
+node_modules
+*.log
+.env
+.env.local
+docs/console-redesign/handoff
+DESIGN.md

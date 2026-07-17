@@ -43,8 +43,9 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	defer stop()
 
 	routerConfig := api.RouterConfig{
-		Version:    cfg.Service.Version,
-		AdminToken: cfg.Security.AdminToken,
+		Version:        cfg.Service.Version,
+		AdminToken:     cfg.Security.AdminToken,
+		AllowedOrigins: cfg.Security.AllowedOrigins,
 	}
 	var syncWorker *workers.RuntimeSyncWorker
 	if cfg.Database.URL != "" {

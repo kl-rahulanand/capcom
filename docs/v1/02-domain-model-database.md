@@ -4,7 +4,7 @@
 
 | Entity | Purpose |
 |---|---|
-| RuntimeConnection | Connected agent runtime and credential reference |
+| RuntimeConnection | Distinguishable runtime instance and credential reference |
 | RuntimeSyncRun | One runtime sync attempt and result |
 | Agent | Normalized agent registry record |
 | AgentDesiredState | Approved Capcom state for an agent |
@@ -29,7 +29,10 @@
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid pk | Internal id |
-| name | text unique | Human name |
+| name | text unique | Stable instance key, for example `gantry-development` |
+| display_name | text | Mutable operator-facing name |
+| environment | text | Environment slug such as `development` or `production` |
+| labels_json | jsonb | Team, region, owner, and other display/filter labels |
 | runtime_type | text | `gantry` in V1 |
 | mode | text | `read_only`, `control_enabled` |
 | endpoint_kind | text | `base_url`, `socket` |
@@ -50,7 +53,9 @@
 Indexes:
 
 - unique `(name)`
+- unique normalized `(runtime_type, endpoint)`
 - index `(runtime_type, status)`
+- index `(environment, status)`
 
 ### secrets
 

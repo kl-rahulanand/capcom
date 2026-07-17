@@ -23,6 +23,7 @@ Implementation has started with the first backend slices:
 - `capcom migrate up` CLI command.
 - `capcom-server` can connect to Postgres through `CAPCOM_DATABASE_URL`.
 - Runtime connection REST APIs.
+- Multi-instance identity with stable keys, display names, environments, labels, and isolated credentials.
 - Gantry runtime adapter read-path health check.
 - Runtime connection test endpoint.
 - AES-256-GCM encrypted runtime secret storage.
@@ -93,6 +94,12 @@ executions. Gantry must have emitted a `delegated_agent` task lifecycle event
 inside a job run before the lower table contains rows; registered agents are
 never relabeled as subagents.
 
+Multiple Gantry installations use the same adapter implementation but separate
+runtime instances. Give each installation a unique endpoint, secret reference,
+stable key, display name, and environment. The console selector shows all three
+identity signals and keeps agents and delegated executions scoped to the
+selected instance.
+
 Health check:
 
 ```powershell
@@ -126,6 +133,7 @@ make run
 | `CAPCOM_SERVICE_VERSION` | `dev` | Version reported by health responses |
 | `CAPCOM_LOG_LEVEL` | `info` | One of `debug`, `info`, `warn`, `error` |
 | `CAPCOM_ADMIN_TOKEN` | empty | Bearer token required by every API except `GET /healthz` |
+| `CAPCOM_CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated browser origins allowed to call the API (the Next.js console). Preflight `OPTIONS` bypasses admin auth |
 | `CAPCOM_SECRET_KEY` | empty | Base64-encoded 32-byte AES key; required when Postgres is configured |
 | `CAPCOM_DATABASE_URL` | empty | Postgres connection string, required for migrations |
 | `CAPCOM_DATABASE_MAX_OPEN_CONNS` | `10` | Maximum open Postgres connections |

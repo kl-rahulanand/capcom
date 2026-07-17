@@ -1,0 +1,68 @@
+# Local Capcom stack: Postgres + migrations + Go API + Next.js console.
+# Dev-only credentials — do not use these values outside local development.
+#
+#   docker compose up --build
+#   open http://localhost:3000
+#
+# The console is served by the Next.js container, which proxies API calls to the
+# Go API server-side (injecting the admin token), so the browser never needs a
+# token and no login dialog appears.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: capcom
+      POSTGRES_PASSWORD: capcom
+      POSTGRES_DB: capcom
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U capcom -d capcom"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - capcom-pgdata:/var/lib/postgresql/data
+
+  migrate:
+    build: .
+    entrypoint: ["/app/capcom", "migrate", "up"]
+    environment:
+      CAPCOM_DATABASE_URL: postgres://capcom:capcom@postgres:5432/capcom?sslmode=disable
+      CAPCOM_SECRET_KEY: "+Of0d9MTExoWZFq2FAjpvps3XSrgD0uaVv13rU8WzlU="
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    environment:
+      CAPCOM_HTTP_ADDR: ":8080"
+      CAPCOM_DATABASE_URL: postgres://capcom:capcom@postgres:5432/capcom?sslmode=disable
+      CAPCOM_ADMIN_TOKEN: "capcom-local-dev-token"
+      CAPCOM_SECRET_KEY: "+Of0d9MTExoWZFq2FAjpvps3XSrgD0uaVv13rU8WzlU="
+      CAPCOM_CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8081:8080"
+
+  web:
+    build: ./web
+    environment:
+      # Server-side only: the Next proxy reads these; never exposed to the browser.
+      CAPCOM_API_URL: "http://api:8080"
+      CAPCOM_ADMIN_TOKEN: "capcom-local-dev-token"
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
+volumes:
+  capcom-pgdata:

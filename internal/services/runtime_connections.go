@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 
 	runtimeadapter "capcom/internal/adapters/runtime"
@@ -11,6 +13,7 @@ import (
 
 type RuntimeConnectionRepository interface {
 	Create(ctx context.Context, conn domain.RuntimeConnection) (domain.RuntimeConnection, error)
+	UpdateIdentity(ctx context.Context, conn domain.RuntimeConnection) (domain.RuntimeConnection, error)
 	Get(ctx context.Context, id string) (domain.RuntimeConnection, error)
 	List(ctx context.Context) ([]domain.RuntimeConnection, error)
 }
@@ -28,6 +31,9 @@ type RuntimeConnectionService struct {
 
 type CreateRuntimeConnectionInput struct {
 	Name        string
+	DisplayName string
+	Environment string
+	Labels      map[string]string
 	Kind        domain.RuntimeKind
 	Mode        domain.RuntimeMode
 	Endpoint    string
@@ -35,6 +41,15 @@ type CreateRuntimeConnectionInput struct {
 	Reason      string
 	Description string
 	AuthRef     string
+}
+
+type UpdateRuntimeInstanceIdentityInput struct {
+	ID          string
+	DisplayName string
+	Environment string
+	Labels      map[string]string
+	Actor       string
+	Reason      string
 }
 
 func (s RuntimeConnectionService) WithCredentialResolver(resolver runtimeadapter.CredentialResolver) RuntimeConnectionService {
@@ -75,13 +90,28 @@ func (s RuntimeConnectionService) Create(ctx context.Context, input CreateRuntim
 		return domain.RuntimeConnection{}, fmt.Errorf("resolve auth_ref: %w", err)
 	}
 
+	endpoint, err := normalizeRuntimeEndpoint(input.Endpoint)
+	if err != nil {
+		return domain.RuntimeConnection{}, err
+	}
+	displayName := strings.TrimSpace(input.DisplayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(input.Name)
+	}
+	environment := strings.ToLower(strings.TrimSpace(input.Environment))
+	if environment == "" {
+		environment = "unspecified"
+	}
 	conn, err := s.runtimes.Create(ctx, domain.RuntimeConnection{
-		Name:    strings.TrimSpace(input.Name),
-		Kind:    input.Kind,
-		Mode:    input.Mode,
-		Status:  domain.RuntimeStatusPending,
-		BaseURL: strings.TrimSpace(input.Endpoint),
-		AuthRef: strings.TrimSpace(input.AuthRef),
+		Name:        strings.TrimSpace(input.Name),
+		DisplayName: displayName,
+		Environment: environment,
+		Kind:        input.Kind,
+		Mode:        input.Mode,
+		Status:      domain.RuntimeStatusPending,
+		BaseURL:     endpoint,
+		AuthRef:     strings.TrimSpace(input.AuthRef),
+		Labels:      normalizeLabels(input.Labels),
 		Metadata: map[string]any{
 			"description": strings.TrimSpace(input.Description),
 		},
@@ -102,6 +132,8 @@ func (s RuntimeConnectionService) Create(ctx context.Context, input CreateRuntim
 			After: map[string]any{
 				"id":           conn.ID,
 				"name":         conn.Name,
+				"display_name": conn.DisplayName,
+				"environment":  conn.Environment,
 				"runtime_type": string(conn.Kind),
 				"mode":         string(conn.Mode),
 				"status":       string(conn.Status),
@@ -125,6 +157,42 @@ func (s RuntimeConnectionService) Get(ctx context.Context, id string) (domain.Ru
 
 func (s RuntimeConnectionService) List(ctx context.Context) ([]domain.RuntimeConnection, error) {
 	return s.runtimes.List(ctx)
+}
+
+func (s RuntimeConnectionService) UpdateIdentity(ctx context.Context, input UpdateRuntimeInstanceIdentityInput) (domain.RuntimeConnection, error) {
+	if strings.TrimSpace(input.ID) == "" || strings.TrimSpace(input.DisplayName) == "" {
+		return domain.RuntimeConnection{}, fmt.Errorf("id and display_name are required")
+	}
+	environment := strings.ToLower(strings.TrimSpace(input.Environment))
+	if !regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`).MatchString(environment) {
+		return domain.RuntimeConnection{}, fmt.Errorf("environment must start with a letter and contain only lowercase letters, digits, underscores, or hyphens")
+	}
+	if strings.TrimSpace(input.Actor) == "" || strings.TrimSpace(input.Reason) == "" {
+		return domain.RuntimeConnection{}, fmt.Errorf("actor and reason are required")
+	}
+	before, err := s.runtimes.Get(ctx, strings.TrimSpace(input.ID))
+	if err != nil {
+		return domain.RuntimeConnection{}, err
+	}
+	updated := before
+	updated.DisplayName = strings.TrimSpace(input.DisplayName)
+	updated.Environment = environment
+	updated.Labels = normalizeLabels(input.Labels)
+	updated, err = s.runtimes.UpdateIdentity(ctx, updated)
+	if err != nil {
+		return domain.RuntimeConnection{}, err
+	}
+	if s.audit != nil {
+		_, err = s.audit.Create(ctx, domain.AuditEvent{RuntimeConnectionID: updated.ID, Actor: strings.TrimSpace(input.Actor), EventType: "runtime_instance.identity_updated", TargetType: "runtime_instance", TargetID: updated.ID, Reason: strings.TrimSpace(input.Reason), Result: "succeeded", Before: instanceIdentityAudit(before), After: instanceIdentityAudit(updated)})
+		if err != nil {
+			return domain.RuntimeConnection{}, fmt.Errorf("audit runtime instance identity update: %w", err)
+		}
+	}
+	return updated, nil
+}
+
+func instanceIdentityAudit(conn domain.RuntimeConnection) map[string]any {
+	return map[string]any{"name": conn.Name, "display_name": conn.DisplayName, "environment": conn.Environment, "labels": conn.Labels, "endpoint": conn.BaseURL, "runtime_type": conn.Kind}
 }
 
 func (s RuntimeConnectionService) Test(ctx context.Context, id string) (*runtimeadapter.CheckResult, error) {
@@ -195,6 +263,10 @@ func validateCreateRuntimeConnection(input CreateRuntimeConnectionInput) error {
 	if strings.TrimSpace(input.Endpoint) == "" {
 		return fmt.Errorf("endpoint is required")
 	}
+	environment := strings.ToLower(strings.TrimSpace(input.Environment))
+	if environment != "" && !regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`).MatchString(environment) {
+		return fmt.Errorf("environment must start with a letter and contain only lowercase letters, digits, underscores, or hyphens")
+	}
 	if strings.TrimSpace(input.AuthRef) == "" {
 		return fmt.Errorf("auth_ref is required")
 	}
@@ -205,4 +277,29 @@ func validateCreateRuntimeConnection(input CreateRuntimeConnectionInput) error {
 		return fmt.Errorf("reason is required")
 	}
 	return nil
+}
+
+func normalizeRuntimeEndpoint(raw string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", fmt.Errorf("endpoint must be an absolute http or https URL")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
+func normalizeLabels(labels map[string]string) map[string]string {
+	result := make(map[string]string, len(labels))
+	for key, value := range labels {
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			result[key] = value
+		}
+	}
+	return result
 }

@@ -17,6 +17,13 @@ const (
 	defaultServiceVersion    = "dev"
 )
 
+// defaultCORSAllowedOrigins are the browser origins permitted to call the API
+// when CAPCOM_CORS_ALLOWED_ORIGINS is unset (the local Next.js console).
+var defaultCORSAllowedOrigins = []string{
+	"http://localhost:3000",
+	"http://127.0.0.1:3000",
+}
+
 type Config struct {
 	HTTP     HTTPConfig
 	Database DatabaseConfig
@@ -40,7 +47,8 @@ type SecretConfig struct {
 }
 
 type SecurityConfig struct {
-	AdminToken string
+	AdminToken     string
+	AllowedOrigins []string
 }
 
 type HTTPConfig struct {
@@ -138,7 +146,8 @@ func LoadFromLookup(lookup func(string) (string, bool)) (Config, error) {
 		},
 		Secrets: SecretConfig{Key: secretKey},
 		Security: SecurityConfig{
-			AdminToken: stringEnv(lookup, "CAPCOM_ADMIN_TOKEN", ""),
+			AdminToken:     stringEnv(lookup, "CAPCOM_ADMIN_TOKEN", ""),
+			AllowedOrigins: stringListEnv(lookup, "CAPCOM_CORS_ALLOWED_ORIGINS", defaultCORSAllowedOrigins),
 		},
 		Service: ServiceConfig{
 			Version: stringEnv(lookup, "CAPCOM_SERVICE_VERSION", defaultServiceVersion),
@@ -198,6 +207,24 @@ func stringEnv(lookup func(string) (string, bool), key string, fallback string) 
 		return fallback
 	}
 	return value
+}
+
+func stringListEnv(lookup func(string) (string, bool), key string, fallback []string) []string {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	if len(result) == 0 {
+		return fallback
+	}
+	return result
 }
 
 func durationEnv(lookup func(string) (string, bool), key string, fallback time.Duration) (time.Duration, error) {

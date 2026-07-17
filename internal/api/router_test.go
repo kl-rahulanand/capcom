@@ -71,6 +71,49 @@ func TestNotFound(t *testing.T) {
 	}
 }
 
+func TestCORSPreflightBypassesAuth(t *testing.T) {
+	router := NewRouter(RouterConfig{
+		Version:        "test",
+		AdminToken:     "test-admin-token",
+		AllowedOrigins: []string{"http://localhost:3000"},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodOptions, "/v1/runtime-instances", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if origin := rec.Header().Get("Access-Control-Allow-Origin"); origin != "http://localhost:3000" {
+		t.Fatalf("allow-origin = %q, want http://localhost:3000", origin)
+	}
+	if methods := rec.Header().Get("Access-Control-Allow-Methods"); methods == "" {
+		t.Fatalf("allow-methods header missing")
+	}
+}
+
+func TestCORSAllowOriginOnDisallowedOrigin(t *testing.T) {
+	router := NewRouter(RouterConfig{
+		Version:        "test",
+		AdminToken:     "test-admin-token",
+		AllowedOrigins: []string{"http://localhost:3000"},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("Origin", "http://evil.example")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if origin := rec.Header().Get("Access-Control-Allow-Origin"); origin != "" {
+		t.Fatalf("allow-origin = %q, want empty for disallowed origin", origin)
+	}
+}
+
 func TestCreateRuntimeConnection(t *testing.T) {
 	router := NewRouter(RouterConfig{
 		Version:            "test",
@@ -79,6 +122,9 @@ func TestCreateRuntimeConnection(t *testing.T) {
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	body := bytes.NewBufferString(`{
 		"name":"local-gantry",
+		"display_name":"Gantry Development",
+		"environment":"development",
+		"labels":{"team":"platform"},
 		"runtime_type":"gantry",
 		"mode":"read_only",
 		"endpoint":"http://127.0.0.1:3000",
@@ -101,6 +147,63 @@ func TestCreateRuntimeConnection(t *testing.T) {
 	}
 	if got.ID != "runtime-1" {
 		t.Fatalf("id = %q, want runtime-1", got.ID)
+	}
+	if got.DisplayName != "Gantry Development" || got.Environment != "development" {
+		t.Fatalf("instance identity = %#v", got)
+	}
+}
+
+func TestUpdateRuntimeInstanceIdentity(t *testing.T) {
+	router := NewRouter(RouterConfig{
+		Version:            "test",
+		AdminToken:         "test-admin-token",
+		RuntimeConnections: fakeRuntimeConnectionService{},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	body := bytes.NewBufferString(`{
+		"display_name":"Gantry Staging",
+		"environment":"staging",
+		"labels":{"team":"platform"},
+		"actor":"test",
+		"reason":"classify instance"
+	}`)
+	req := authenticatedRequest(http.MethodPatch, "/v1/runtime-instances/runtime-1", body)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got runtimeConnectionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Name != "local-gantry" || got.DisplayName != "Gantry Staging" || got.Environment != "staging" {
+		t.Fatalf("instance identity = %#v", got)
+	}
+}
+
+func TestRuntimeInstanceLiveAgentsAlias(t *testing.T) {
+	router := NewRouter(RouterConfig{Version: "test", AdminToken: "test-admin-token", RuntimeConnections: fakeRuntimeConnectionService{}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	req := authenticatedRequest(http.MethodGet, "/v1/runtime-instances/runtime-1/live/agents", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRuntimeInstancePersistedAgentsAreScoped(t *testing.T) {
+	syncService := &fakeRuntimeSyncService{}
+	router := NewRouter(RouterConfig{Version: "test", AdminToken: "test-admin-token", RuntimeSync: syncService}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	req := authenticatedRequest(http.MethodGet, "/v1/runtime-instances/runtime-staging/agents", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if syncService.runtimeID != "runtime-staging" {
+		t.Fatalf("runtime id = %q", syncService.runtimeID)
 	}
 }
 
@@ -277,19 +380,55 @@ func authenticatedRequest(method, target string, body io.Reader) *http.Request {
 
 type fakeRuntimeConnectionService struct{}
 
+type fakeRuntimeSyncService struct{ runtimeID string }
+
+func (*fakeRuntimeSyncService) Sync(context.Context, services.SyncRuntimeInput) (domain.RuntimeSyncRun, error) {
+	return domain.RuntimeSyncRun{}, nil
+}
+func (*fakeRuntimeSyncService) ListRuns(context.Context, string, int) ([]domain.RuntimeSyncRun, error) {
+	return nil, nil
+}
+func (*fakeRuntimeSyncService) GetRun(context.Context, string, string) (domain.RuntimeSyncRun, error) {
+	return domain.RuntimeSyncRun{}, nil
+}
+func (s *fakeRuntimeSyncService) ListAgents(_ context.Context, runtimeID string) ([]domain.PersistedAgent, error) {
+	s.runtimeID = runtimeID
+	return []domain.PersistedAgent{{RuntimeConnectionID: runtimeID, RuntimeAgentID: "agent:main_agent", Agent: domain.Agent{Name: "Main"}}}, nil
+}
+func (*fakeRuntimeSyncService) GetAgent(context.Context, string) (domain.PersistedAgentDetail, error) {
+	return domain.PersistedAgentDetail{}, nil
+}
+func (*fakeRuntimeSyncService) ListSubagentExecutions(context.Context, string, string) ([]domain.PersistedSubagentExecution, error) {
+	return nil, nil
+}
+
 func (fakeRuntimeConnectionService) Create(_ context.Context, input services.CreateRuntimeConnectionInput) (domain.RuntimeConnection, error) {
 	now := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
 	return domain.RuntimeConnection{
-		ID:        "runtime-1",
-		Name:      input.Name,
-		Kind:      input.Kind,
-		Mode:      input.Mode,
-		Status:    domain.RuntimeStatusPending,
-		BaseURL:   input.Endpoint,
-		AuthRef:   input.AuthRef,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          "runtime-1",
+		Name:        input.Name,
+		DisplayName: input.DisplayName,
+		Environment: input.Environment,
+		Labels:      input.Labels,
+		Kind:        input.Kind,
+		Mode:        input.Mode,
+		Status:      domain.RuntimeStatusPending,
+		BaseURL:     input.Endpoint,
+		AuthRef:     input.AuthRef,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}, nil
+}
+
+func (fakeRuntimeConnectionService) UpdateIdentity(_ context.Context, input services.UpdateRuntimeInstanceIdentityInput) (domain.RuntimeConnection, error) {
+	conn, err := fakeRuntimeConnectionService{}.Get(context.Background(), input.ID)
+	if err != nil {
+		return domain.RuntimeConnection{}, err
+	}
+	conn.DisplayName = input.DisplayName
+	conn.Environment = input.Environment
+	conn.Labels = input.Labels
+	return conn, nil
 }
 
 type fakeSecretService struct{}
@@ -310,14 +449,17 @@ func testSecret(name string) domain.Secret {
 func (fakeRuntimeConnectionService) Get(context.Context, string) (domain.RuntimeConnection, error) {
 	now := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
 	return domain.RuntimeConnection{
-		ID:        "runtime-1",
-		Name:      "local-gantry",
-		Kind:      domain.RuntimeKindGantry,
-		Mode:      domain.RuntimeModeReadOnly,
-		Status:    domain.RuntimeStatusPending,
-		BaseURL:   "http://127.0.0.1:3000",
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          "runtime-1",
+		Name:        "local-gantry",
+		DisplayName: "Gantry Development",
+		Environment: "development",
+		Labels:      map[string]string{"team": "platform"},
+		Kind:        domain.RuntimeKindGantry,
+		Mode:        domain.RuntimeModeReadOnly,
+		Status:      domain.RuntimeStatusPending,
+		BaseURL:     "http://127.0.0.1:3000",
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}, nil
 }
 

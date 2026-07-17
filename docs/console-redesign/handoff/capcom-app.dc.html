@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+  <style>
+    body { margin:0; background:#0A0C10; color:#E8ECF2; font-family:'Geist',sans-serif; }
+    a { color:#3DE1A0; text-decoration:none; }
+    a:hover { color:#7FEDC0; }
+    @keyframes rise { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+  </style>
+</helmet>
+<div data-screen-label="Capcom app" style="--cv:#0A0C10;--sf:#10131A;--el:#161A22;--hl:#232833;--sl:#1A1F28;--tx:#E8ECF2;--mu:#8A93A2;--fa:#5B6473;--ac:#3DE1A0;--acd:rgba(61,225,160,.11);--wn:#F2B441;--wnd:rgba(242,180,65,.12);--dg:#F2555A;--dgd:rgba(242,85,90,.12);--onac:#06231A;--glow:rgba(61,225,160,.2);--shdw:0 1px 0 rgba(255,255,255,.04) inset, 0 18px 40px rgba(0,0,0,.45);--chi:0 1px 0 rgba(255,255,255,.04) inset;{{ themeOverride }};width:100vw;height:100vh;display:flex;background:var(--cv);color:var(--tx);font-family:'Geist',sans-serif;font-size:14px;line-height:1.5;overflow:hidden;position:relative">
+  <!-- sidebar -->
+  <div style="width:230px;flex:0 0 230px;background:var(--sf);border-right:1px solid var(--sl);display:flex;flex-direction:column;padding:20px 12px 16px">
+    <div style="padding:0 10px 20px">
+      <div style="display:flex;align-items:center;gap:8px;font-family:'Geist Mono',monospace;font-weight:600;font-size:14px;letter-spacing:.14em">
+        <span style="width:8px;height:8px;border-radius:999px;background:var(--ac);box-shadow:0 0 0 3px var(--acd)"></span>CAPCOM
+      </div>
+      <div style="font-family:'Geist Mono',monospace;font-size:11px;color:var(--fa);letter-spacing:.08em;margin-top:4px;padding-left:16px">control plane</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <div onClick="{{ goOverview }}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-radius:8px;color:var(--mu);font-weight:500;font-size:13px;{{ navOverviewStyle }}" style-hover="color:var(--tx)">Overview</div>
+      <div onClick="{{ toggleAdapters }}" style="cursor:pointer;display:flex;align-items:center;gap:6px;padding:10px 10px 4px;font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fa)" style-hover="color:var(--mu)"><span style="font-size:10px">{{ adaptersChev }}</span>Adapters<span style="margin-left:auto">{{ adapterCount }}</span></div>
+      <sc-if value="{{ adaptersOpen }}" hint-placeholder-val="{{ false }}">
+      <sc-for list="{{ adapters }}" as="a" hint-placeholder-count="5">
+        <div onClick="{{ a.open }}" style="cursor:pointer;display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:8px;color:var(--fa);font-size:13px;{{ a.navStyle }}" style-hover="color:var(--tx);background:var(--sl)">
+          <span style="width:6px;height:6px;flex:0 0 6px;border-radius:999px;background:{{ a.dot }}"></span>{{ a.name }}
+          <span style="margin-left:auto;font-family:'Geist Mono',monospace;font-size:11px;color:var(--fa)">{{ a.instCount }}</span>
+        </div>
+      </sc-for>
+      </sc-if>
+      <div onClick="{{ goAgents }}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-radius:8px;color:var(--mu);font-weight:500;font-size:13px;{{ navAgentsStyle }}" style-hover="color:var(--tx)">Agents<span style="font-family:'Geist Mono',monospace;font-size:11px;color:var(--fa)">{{ agentTotal }}</span></div>
+    </div>
+    <div style="margin-top:auto;padding:0 10px;display:flex;flex-direction:column;gap:6px">
+      <div style="display:flex;align-items:center;gap:8px;font-family:'Geist Mono',monospace;font-size:11px;color:{{ sysColor }}"><span style="width:6px;height:6px;border-radius:999px;background:{{ sysColor }}"></span>{{ sysText }}</div>
+      <div style="font-family:'Geist Mono',monospace;font-size:11px;color:var(--fa)">v0.4.2 · go/capcom</div>
+    </div>
+  </div>
+  <!-- main -->
+  <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+    <div style="height:56px;flex:0 0 56px;border-bottom:1px solid var(--sl);display:flex;align-items:center;gap:12px;padding:0 24px">
+      <sc-if value="{{ showPicker }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:8px;border:1px solid var(--hl);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:500;color:var(--tx);white-space:nowrap"><span style="font-family:'Geist Mono',monospace;font-size:12px;color:var(--mu)">env</span>All environments<span style="color:var(--fa);font-size:11px">▾</span></div>
+      </sc-if>
+      <sc-if value="{{ cur }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--fa);white-space:nowrap"><span onClick="{{ goOverview }}" style="cursor:pointer" style-hover="color:var(--tx)">Adapters</span><span>›</span><span style="color:var(--tx);font-weight:500">{{ curName }}</span></div>
+      </sc-if>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:12px">
+        <span style="font-family:'Geist Mono',monospace;font-size:12px;color:var(--fa);white-space:nowrap">last update {{ lastUpdate }}</span>
+        <div onClick="{{ refresh }}" style="cursor:pointer;display:flex;align-items:center;gap:6px;border:1px solid var(--hl);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:500;white-space:nowrap" style-hover="border-color:var(--ac);color:var(--ac)">↻ Refresh now</div>
+        <div onClick="{{ openPalette }}" style="cursor:pointer;font-family:'Geist Mono',monospace;font-size:11px;color:var(--mu);border:1px solid var(--hl);border-radius:6px;padding:4px 7px" style-hover="border-color:var(--ac);color:var(--ac)">⌘K</div>
+        <div onClick="{{ toggleTheme }}" style="cursor:pointer;border:1px solid var(--hl);border-radius:8px;padding:6px 12px;font-size:12px;font-family:'Geist Mono',monospace;color:var(--mu);white-space:nowrap" style-hover="border-color:var(--fa);color:var(--tx)">{{ themeLabel }}</div>
+      </div>
+    </div>
+    <!-- OVERVIEW -->
+    <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1;padding:26px 32px;display:flex;flex-direction:column;gap:20px;overflow:auto;animation:rise .2s ease-out">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
+          <div>
+            <div style="font-size:22px;font-weight:700;letter-spacing:-.02em">Overview</div>
+            <div style="font-size:13px;color:var(--mu);margin-top:2px">Everything Capcom is watching, grouped by runtime adapter. Click a card to drill in.</div>
+          </div>
+          <div style="background:var(--ac);color:var(--onac);border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;box-shadow:0 0 12px var(--glow);flex:0 0 auto" style-hover="filter:brightness(1.08)">+ Add instance</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px">
+          <sc-for list="{{ adapters }}" as="a" hint-placeholder-count="5">
+            <div onClick="{{ a.open }}" style="cursor:pointer;background:var(--el);border:1px solid var(--hl);border-radius:12px;padding:20px;box-shadow:var(--chi);transition:border-color .14s ease-out" style-hover="border-color:var(--ac)">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="width:8px;height:8px;border-radius:999px;background:{{ a.dot }}"></span>
+                <span style="font-size:15px;font-weight:600;flex:1">{{ a.name }}</span>
+                <span style="font-family:'Geist Mono',monospace;font-size:11px;color:{{ a.dot }};background:{{ a.badgeBg }};border-radius:999px;padding:3px 9px;white-space:nowrap">{{ a.badgeText }}</span>
+              </div>
+              <div style="display:flex;gap:32px;margin-top:16px">
+                <div><div style="font-family:'Geist Mono',monospace;font-size:26px;font-weight:600;font-feature-settings:'tnum' 1">{{ a.instCount }}</div><div style="font-size:12px;color:var(--mu);margin-top:2px">{{ a.instLabel }}</div></div>
+                <div><div style="font-family:'Geist Mono',monospace;font-size:26px;font-weight:600;font-feature-settings:'tnum' 1">{{ a.agentCount }}</div><div style="font-size:12px;color:var(--mu);margin-top:2px">agents running</div></div>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;padding-top:12px;border-top:1px solid var(--sl)">
+                <span style="font-size:12px;color:{{ a.footColor }}">{{ a.foot }}</span>
+                <span style="font-size:12px;color:var(--fa);font-weight:500;white-space:nowrap">View details →</span>
+              </div>
+            </div>
+          </sc-for>
+          <div style="cursor:pointer;border:1px dashed var(--hl);border-radius:12px;padding:20px;min-height:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--fa)" style-hover="border-color:var(--ac);color:var(--ac)">
+            <span style="font-size:22px;line-height:1">+</span>
+            <span style="font-size:13px;font-weight:500">Connect an adapter</span>
+            <span style="font-size:12px">Point Capcom at another runtime</span>
+          </div>
+        </div>
+        <div style="background:var(--sf);border:1px solid var(--hl);border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--sl)">
+            <span style="font-size:14px;font-weight:600">Needs your attention</span>
+            <span style="font-size:12px;color:var(--fa)">{{ attnCount }}</span>
+          </div>
+          <sc-for list="{{ attention }}" as="t" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--sl)" style-hover="background:var(--sl)">
+              <span style="width:8px;height:8px;flex:0 0 8px;border-radius:999px;background:{{ t.dot }};box-shadow:0 0 0 3px {{ t.dotDim }}"></span>
+              <span style="font-family:'Geist Mono',monospace;font-size:13px;font-weight:500;white-space:nowrap">{{ t.name }} <span style="color:var(--fa);font-weight:400">· {{ t.adapter }}</span></span>
+              <span style="font-size:12px;color:var(--mu);flex:1">{{ t.msg }}</span>
+              <span style="font-family:'Geist Mono',monospace;font-size:11px;color:{{ t.dot }};background:{{ t.dotDim }};border-radius:999px;padding:3px 9px">{{ t.badge }}</span>
+              <span onClick="{{ t.act }}" style="cursor:pointer;font-size:12px;color:var(--ac);font-weight:500;white-space:nowrap" style-hover="text-decoration:underline">{{ t.action }}</span>
+            </div>
+          </sc-for>
+          <sc-if value="{{ attnEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:10px;padding:16px 18px;color:var(--mu);font-size:13px"><span style="width:8px;height:8px;border-radius:999px;background:var(--ac);box-shadow:0 0 0 3px var(--acd)"></span>Nothing needs attention right now — all instances are fresh.</div>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>
+    <!-- AGENTS -->
+    <sc-if value="{{ isAgents }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;padding:26px 32px;display:flex;flex-direction:column;gap:20px;overflow:auto;animation:rise .2s ease-out">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
+          <div>
+            <div style="font-size:22px;font-weight:700;letter-spacing:-.02em">Agents</div>
+            <div style="font-size:13px;color:var(--mu);margin-top:2px">Every agent Capcom has imported, across all adapters and instances.</div>
+          </div>
+        </div>
+        <div style="background:var(--sf);border:1px solid var(--hl);border-radius:12px;overflow:hidden">
+          <div style="display:grid;grid-template-columns:1.6fr 1.8fr .6fr 2fr .9fr;padding:11px 18px;border-bottom:1px solid var(--hl);font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fa)">
+            <span>Agent</span><span>Adapter · Instance</span><span>Skills</span><span>Can access</span><span>Status</span>
+          </div>
+          <sc-for list="{{ allAgents }}" as="g" hint-placeholder-count="8">
+            <div style="display:grid;grid-template-columns:1.6fr 1.8fr .6fr 2fr .9fr;align-items:center;padding:12px 18px;border-bottom:1px solid var(--sl)" style-hover="background:var(--sl)">
+              <span style="font-family:'Geist Mono',monospace;font-size:13px;font-weight:500">{{ g.name }}</span>
+              <span style="font-family:'Geist Mono',monospace;font-size:12px;color:var(--mu)">{{ g.loc }}</span>
+              <span style="font-family:'Geist Mono',monospace;font-size:13px">{{ g.skills }}</span>
+              <span style="display:flex;gap:6px;flex-wrap:wrap">
+                <sc-for list="{{ g.access }}" as="ch" hint-placeholder-count="2">
+                  <span style="font-family:'Geist Mono',monospace;font-size:11px;background:var(--sl);border:1px solid var(--hl);border-radius:999px;padding:2px 8px;white-space:nowrap">{{ ch }}</span>
+                </sc-for>
+                <sc-if value="{{ g.noAccess }}" hint-placeholder-val="{{ false }}">
+                  <span style="font-family:'Geist Mono',monospace;font-size:11px;color:var(--fa)">none resolved</span>
+                </sc-if>
+              </span>
+              <span style="font-family:'Geist Mono',monospace;font-size:11px;color:{{ g.statusColor }};background:{{ g.statusBg }};border-radius:999px;padding:2px 8px;justify-self:start">{{ g.status }}</span>
+            </div>
+          </sc-for>
+          <div style="padding:10px 18px;font-size:12px;color:var(--fa)">{{ agentsNote }}</div>
+        </div>
+      </div>
+    </sc-if>
+    <!-- ADAPTER DETAIL -->
+    <sc-if value="{{ cur }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;padding:24px 32px;display:flex;flex-direction:column;gap:14px;overflow:auto;animation:rise .2s ease-out">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
+          <div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <span style="font-size:22px;font-weight:700;letter-spacing:-.02em">{{ curName }}</span>
+              <span style="font-family:'Geist Mono',monospace;font-size:11px;color:{{ cur.dot }};background:{{ cur.badgeBg }};border-radius:999px;padding:3px 9px;white-space:nowrap">{{ cur.badgeText }}</span>
+            </div>
+            <div style="font-size:13px;color:var(--mu);margin-top:3px">{{ cur.subtitle }}</div>
+          </div>
+          <div style="display:flex;gap:10px;flex:0 0 auto">
+            <div style="border:1px solid var(--hl);border-radius:8px;padding:8px 14px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap" style-hover="border-color:var(--ac);color:var(--ac)">+ Add instance</div>
+            <div style="border:1px solid var(--hl);border-radius:8px;padding:8px 14px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap" style-hover="border-color:var(--fa)">Adapter settings</div>
+            <div onClick="{{ cur.reimportAll }}" style="background:var(--ac);color:var(--onac);border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;box-shadow:0 0 12px var(--glow)" style-hover="filter:brightness(1.08)">↻ Re-import all instances</div>
+          </div>
+        </div>
+        <sc-for list="{{ cur.instances }}" as="inst" hint-placeholder-count="4">
+          <div style="background:var(--sf);border:1px solid var(--hl);border-radius:12px;overflow:hidden;flex:0 0 auto">
+            <div onClick="{{ inst.toggle }}" style="display:flex;align-items:center;gap:12px;padding:14px 18px;cursor:pointer" style-hover="background:var(--sl)">
+              <span style="color:var(--fa);font-size:11px">{{ inst.chev }}</span>
+              <span style="width:8px;height:8px;border-radius:999px;background:{{ inst.dot }}"></span>
+              <span style="font-family:'Geist Mono',monospace;font-size:14px;font-weight:600;white-space:nowrap">{{ inst.name }}</span>
+              <span style="font-family:'Geist Mono',monospace;font-size:11px;color:var(--mu);border:1px solid var(--hl);border-radius:999px;padding:2px 8px;white-space:nowrap">{{ inst.env }}</span>
+              <span style="font-size:12px;color:var(--mu);white-space:nowrap">{{ inst.counts }}</span>
+              <span style="margin-left:auto;font-size:12px;color:{{ inst.updColor }};white-space:nowrap">{{ inst.updText }}</span>
+              <span onClick="{{ inst.reimport }}" style="cursor:pointer;font-size:12px;color:var(--ac);font-weight:500;border:1px solid var(--hl);border-radius:8px;padding:5px 12px;white-space:nowrap" style-hover="border-color:var(--ac)">↻ Re-import</span>
+            </div>
+            <sc-if value="{{ inst.expanded }}" hint-placeholder-val="{{ false }}">
+              <div style="border-top:1px solid var(--sl)">
+                <div style="display:grid;grid-template-columns:2fr .7fr 2.3fr 1fr;padding:9px 18px 9px 44px;border-bottom:1px solid var(--sl);font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fa)">
+                  <span>Agent</span><span>Skills</span><span>Can access</span><span>Status</span>
+                </div>
+                <sc-for list="{{ inst.agents }}" as="ag" hint-placeholder-count="3">
+                  <div style="display:grid;grid-template-columns:2fr .7fr 2.3fr 1fr;align-items:center;padding:11px 18px 11px 44px;border-bottom:1px solid var(--sl)" style-hover="background:var(--sl)">
+                    <span style="font-family:'Geist Mono',monospace;font-size:13px;font-weight:500">{{ ag.name }}</span>
+                    <span style="font-family:'Geist Mono',monospace;font-size:13px">{{ ag.skills }}</span>
+                    <span style="display:flex;gap:6px;flex-wrap:wrap">
+                      <sc-for list="{{ ag.access }}" as="ch" hint-placeholder-count="2">
+                        <span style="font-family:'Geist Mono',monospace;font-size:11px;background:var(--sl);border:1px solid var(--hl);border-radius:999px;padding:2px 8px;white-space:nowrap">{{ ch }}</span>
+                      </sc-for>
+                      <sc-if value="{{ ag.noAccess }}" hint-placeholder-val="{{ false }}">
+                        <span style="font-family:'Geist Mono',monospace;font-size:11px;color:var(--fa)">none resolved</span>
+                      </sc-if>
+                    </span>
+                    <span style="font-family:'Geist Mono',monospace;font-size:11px;color:{{ ag.statusColor }};background:{{ ag.statusBg }};border-radius:999px;padding:2px 8px;justify-self:start">{{ ag.status }}</span>
+                  </div>
+                </sc-for>
+                <sc-if value="{{ inst.showNote }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding:9px 18px 11px 44px;font-size:12px;color:var(--fa)">{{ inst.showNote }}</div>
+                </sc-if>
+              </div>
+            </sc-if>
+          </div>
+        </sc-for>
+        <div style="font-size:12px;color:var(--fa);padding:0 4px">{{ cur.endnote }}</div>
+      </div>
+    </sc-if>
+    <!-- COMMAND PALETTE -->
+    <sc-if value="{{ paletteOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closePalette }}" style="position:absolute;inset:0;background:rgba(4,6,9,.55);backdrop-filter:blur(1.5px)"></div>
+      <div style="position:absolute;left:50%;top:110px;transform:translateX(-50%);width:600px;background:var(--el);border:1px solid var(--hl);border-radius:12px;box-shadow:var(--shdw);overflow:hidden;animation:rise .2s ease-out">
+        <div style="display:flex;align-items:center;gap:12px;padding:15px 18px;border-bottom:1px solid var(--sl)">
+          <span style="color:var(--fa)">›</span>
+          <span style="font-family:'Geist Mono',monospace;font-size:14px;color:var(--fa)">Type a command…<span style="display:inline-block;width:2px;height:16px;background:var(--ac);margin-left:2px;vertical-align:-3px"></span></span>
+          <span onClick="{{ closePalette }}" style="cursor:pointer;margin-left:auto;font-family:'Geist Mono',monospace;font-size:11px;color:var(--fa);border:1px solid var(--hl);border-radius:6px;padding:2px 6px" style-hover="color:var(--tx)">esc</span>
+        </div>
+        <div style="padding:8px">
+          <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fa);padding:8px 12px 4px">Actions</div>
+          <div onClick="{{ fixStale }}" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px" style-hover="background:var(--sl)">
+            <span style="font-family:'Geist Mono',monospace;color:var(--ac)">↻</span>
+            <span style="font-size:13px;font-weight:500;flex:1">Re-import all stale or failed instances <span style="font-family:'Geist Mono',monospace;font-size:11px;color:var(--wn)">{{ staleCount }}</span></span>
+            <span style="font-family:'Geist Mono',monospace;font-size:11px;color:var(--fa)">↵</span>
+          </div>
+          <div onClick="{{ openGantry }}" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px" style-hover="background:var(--sl)">
+            <span style="font-family:'Geist Mono',monospace;color:var(--mu)">→</span>
+            <span style="font-size:13px;flex:1;color:var(--mu)">Open Gantry adapter</span>
+          </div>
+          <div onClick="{{ refreshClose }}" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px" style-hover="background:var(--sl)">
+            <span style="font-family:'Geist Mono',monospace;color:var(--mu)">↻</span>
+            <span style="font-size:13px;flex:1;color:var(--mu)">Refresh all adapters now</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;padding:10px 18px;border-top:1px solid var(--sl);font-family:'Geist Mono',monospace;font-size:11px;color:var(--fa)">
+          <span>↵ run</span><span>esc close</span>
+          <span style="margin-left:auto">capcom ⌘K</span>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;defaultTheme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Appearance&quot;},&quot;startView&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;overview&quot;,&quot;gantry&quot;,&quot;langgraph&quot;,&quot;temporal&quot;,&quot;letta&quot;,&quot;crewai&quot;],&quot;default&quot;:&quot;overview&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;}}">
+class Component extends DCLogic {
+  state = { theme: null, view: null, expanded: null, palette: false, lastUpdate: '9s ago' };
+  data = this.makeData();
+  makeData() {
+    return [
+      { id: 'gantry', name: 'Gantry', endpoint: 'grpc://gantry.agents.internal:7233', ver: 'v1.2.0', poll: '30s', instances: [
+        { name: 'gantry-prod-us', env: 'production', skills: 212, total: 24, updated: '9s ago', status: 'ok', agents: [
+          { name: 'order-router', skills: 12, access: ['orders:rw', 'inventory:read'], status: 'running' },
+          { name: 'billing-reconciler', skills: 9, access: ['payments:rw', 'ledger:read'], status: 'running' },
+          { name: 'support-summarizer', skills: 11, access: ['tickets:read', 'kb:read'], status: 'running' },
+          { name: 'refund-triage', skills: 7, access: ['payments:read', 'tickets:rw'], status: 'running' }] },
+        { name: 'gantry-prod-eu', env: 'production', skills: 166, total: 18, updated: '21s ago', status: 'ok', agents: [
+          { name: 'invoice-matcher', skills: 10, access: ['ledger:rw', 'vendors:read'], status: 'running' },
+          { name: 'shipment-tracker', skills: 8, access: ['logistics:read', 'orders:read'], status: 'running' },
+          { name: 'vat-reporter', skills: 6, access: ['ledger:read', 'tax:rw'], status: 'running' }] },
+        { name: 'gantry-staging', env: 'staging', skills: 98, total: 12, updated: '38s ago', status: 'ok', agents: [
+          { name: 'order-router', skills: 12, access: ['orders:rw', 'inventory:read'], status: 'running' },
+          { name: 'canary-probe', skills: 3, access: ['health:read'], status: 'running' }] },
+        { name: 'gantry-dev', env: 'development', skills: 36, total: 5, updated: '51s ago', status: 'ok', agents: [
+          { name: 'dev-echo', skills: 2, access: ['scratch:rw'], status: 'running' },
+          { name: 'prompt-lab', skills: 4, access: ['kb:read'], status: 'running' }] }] },
+      { id: 'langgraph', name: 'LangGraph', endpoint: 'grpc://langgraph.agents.internal:7233', ver: 'v0.9.4', poll: '30s', instances: [
+        { name: 'prod-us-east-1', env: 'production', skills: 198, total: 24, updated: '12s ago', status: 'ok', agents: [
+          { name: 'doc-indexer', skills: 9, access: ['docs:rw', 'kb:read'], status: 'running' },
+          { name: 'churn-sentinel', skills: 8, access: ['crm:read', 'tickets:read'], status: 'running' },
+          { name: 'kb-curator', skills: 7, access: ['kb:rw'], status: 'running' }] },
+        { name: 'prod-us-west-2', env: 'production', skills: 164, total: 18, updated: '31s ago', status: 'ok', agents: [
+          { name: 'quote-builder', skills: 11, access: ['pricing:read', 'crm:rw'], status: 'running' },
+          { name: 'lead-scorer', skills: 6, access: ['crm:read'], status: 'running' }] },
+        { name: 'staging-us-east', env: 'staging', skills: 98, total: 12, updated: '6m ago', status: 'stale', agents: [
+          { name: 'inventory-forecaster', skills: 6, access: ['inventory:read'], status: 'running' }] }] },
+      { id: 'temporal', name: 'Temporal', endpoint: 'grpc://temporal.agents.internal:7233', ver: 'v1.24', poll: '30s', instances: [
+        { name: 'prod-eu-central', env: 'production', skills: 140, total: 15, updated: '44s ago', status: 'ok', agents: [
+          { name: 'fleet-dispatcher', skills: 14, access: ['fleet:rw', 'geo:read'], status: 'running' },
+          { name: 'compliance-auditor', skills: 8, access: ['audit:rw', 'ledger:read'], status: 'running' }] },
+        { name: 'staging-eu', env: 'staging', skills: 50, total: 6, updated: '58s ago', status: 'ok', agents: [
+          { name: 'payroll-runner', skills: 5, access: ['payroll:rw'], status: 'running' }] }] },
+      { id: 'letta', name: 'Letta', endpoint: 'http://letta.agents.internal:8283', ver: 'v0.6.2', poll: '60s', instances: [
+        { name: 'edge-tokyo', env: 'production', skills: 41, total: 6, updated: '2m ago', status: 'ok', agents: [
+          { name: 'kiosk-concierge', skills: 4, access: ['catalog:read', 'orders:rw'], status: 'running' }] },
+        { name: 'edge-sydney', env: 'production', skills: 38, total: 5, updated: '14m ago', status: 'stale', agents: [
+          { name: 'kiosk-concierge', skills: 4, access: ['catalog:read', 'orders:rw'], status: 'running' }] }] },
+      { id: 'crewai', name: 'CrewAI', endpoint: 'http://crewai.dev.internal:8000', ver: 'v0.9.1', poll: '60s', instances: [
+        { name: 'dev-sandbox', env: 'development', skills: 19, total: 3, updated: '62s ago', status: 'failed', agents: [
+          { name: 'sandbox-echo', skills: 2, access: [], status: 'idle' }] }] }
+    ];
+  }
+  reimport(inst) { inst.updated = 'just now'; inst.status = 'ok'; this.setState({ lastUpdate: 'just now' }); }
+  componentDidMount() {
+    this.onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); this.setState(s => ({ palette: !s.palette })); }
+      if (e.key === 'Escape') this.setState({ palette: false });
+    };
+    window.addEventListener('keydown', this.onKey);
+  }
+  componentWillUnmount() { window.removeEventListener('keydown', this.onKey); }
+  renderVals() {
+    const LIGHT = '--cv:#FBFBFD;--sf:#FFFFFF;--el:#FFFFFF;--hl:#E7E9EE;--sl:#EEF0F4;--tx:#0E1116;--mu:#5B6472;--fa:#98A0AD;--ac:#0E9E6E;--acd:rgba(14,158,110,.10);--wn:#B67C0B;--wnd:rgba(182,124,11,.12);--dg:#D23C42;--dgd:rgba(210,60,66,.10);--onac:#FFFFFF;--glow:rgba(14,158,110,.18);--shdw:0 1px 2px rgba(16,24,40,.06), 0 12px 30px rgba(16,24,40,.10);--chi:0 1px 2px rgba(16,24,40,.05)';
+    const theme = this.state.theme ?? this.props.defaultTheme ?? 'dark';
+    const view = this.state.view ?? this.props.startView ?? 'overview';
+    const isAdapterView = this.data.some(x => x.id === view);
+    const dotFor = s => s === 'ok' ? 'var(--ac)' : s === 'stale' ? 'var(--wn)' : 'var(--dg)';
+    const dimFor = s => s === 'ok' ? 'var(--acd)' : s === 'stale' ? 'var(--wnd)' : 'var(--dgd)';
+    const adapters = this.data.map(a => {
+      const stale = a.instances.filter(i => i.status === 'stale');
+      const failed = a.instances.filter(i => i.status === 'failed');
+      const status = failed.length ? 'failed' : stale.length ? 'stale' : 'ok';
+      const agentCount = a.instances.reduce((s, i) => s + i.total, 0);
+      const foot = failed.length ? `${failed[0].name} import failed · ${failed[0].updated}`
+        : stale.length ? `${stale[0].name} not updated for ${stale[0].updated.replace(' ago', '')}`
+        : `All state fresh · updated ${a.instances[0].updated}`;
+      return {
+        id: a.id, name: a.name, dot: dotFor(status), badgeBg: dimFor(status),
+        badgeText: failed.length ? 'import failed' : stale.length ? `${stale.length} stale` : 'healthy',
+        instCount: a.instances.length, instLabel: a.instances.length === 1 ? 'instance connected' : 'instances connected',
+        agentCount, foot, footColor: status === 'ok' ? 'var(--mu)' : dotFor(status),
+        navStyle: view === a.id ? 'color:var(--tx);font-weight:500;background:var(--sl)' : '',
+        open: () => this.setState({ view: a.id, palette: false })
+      };
+    });
+    const attention = [];
+    this.data.forEach(a => a.instances.forEach(inst => {
+      if (inst.status === 'ok') return;
+      attention.push({
+        name: inst.name, adapter: a.name, dot: dotFor(inst.status), dotDim: dimFor(inst.status),
+        badge: inst.status === 'failed' ? 'failed' : 'stale',
+        msg: inst.status === 'failed' ? "Couldn't import state — connection refused. Check the endpoint."
+          : `State is ${inst.updated.replace(' ago', '')} old — older than the 5m freshness budget.`,
+        action: inst.status === 'failed' ? 'Retry import' : 'Re-import',
+        act: (e) => { e.stopPropagation(); this.reimport(inst); }
+      });
+    }));
+    let cur = null, curName = '';
+    if (view !== 'overview') {
+      const a = this.data.find(x => x.id === view);
+      if (a) {
+        const va = adapters.find(x => x.id === a.id);
+        curName = a.name;
+        cur = {
+          dot: va.dot, badgeBg: va.badgeBg, badgeText: va.badgeText,
+          subtitle: `${a.instances.length} ${va.instLabel} · ${va.agentCount} agents running · state re-imported automatically every ${a.poll}`,
+          endnote: `Connection: ${a.endpoint} · adapter ${a.ver} · freshness budget 5m per instance`,
+          reimportAll: () => { a.instances.forEach(i => { i.updated = 'just now'; i.status = 'ok'; }); this.setState({ lastUpdate: 'just now' }); },
+          instances: a.instances.map((inst, idx) => {
+            const key = a.id + ':' + inst.name;
+            const expanded = (this.state.expanded && key in this.state.expanded) ? this.state.expanded[key] : idx === 0;
+            return {
+              name: inst.name, env: inst.env, expanded, chev: expanded ? '▾' : '▸', dot: dotFor(inst.status),
+              counts: `${inst.total} agents · ${inst.skills} skills`,
+              updText: inst.status === 'failed' ? `import failed · ${inst.updated}` : `updated ${inst.updated}`,
+              updColor: inst.status === 'ok' ? 'var(--mu)' : dotFor(inst.status),
+              showNote: inst.agents.length < inst.total ? `Showing ${inst.agents.length} of ${inst.total} agents` : '',
+              toggle: () => this.setState(s => ({ expanded: { ...(s.expanded || {}), [key]: !expanded } })),
+              reimport: (e) => { e.stopPropagation(); this.reimport(inst); },
+              agents: inst.agents.map(ag => ({
+                ...ag, noAccess: ag.access.length === 0,
+                statusColor: ag.status === 'running' ? 'var(--ac)' : 'var(--fa)',
+                statusBg: ag.status === 'running' ? 'var(--acd)' : 'var(--sl)'
+              }))
+            };
+          })
+        };
+      }
+    }
+    const worst = attention.some(t => t.badge === 'failed') ? 'var(--dg)' : attention.length ? 'var(--wn)' : 'var(--ac)';
+    const staleInsts = [];
+    this.data.forEach(a => a.instances.forEach(i => { if (i.status !== 'ok') staleInsts.push(i); }));
+    const adaptersOpen = this.state.adaptersOpen ?? isAdapterView;
+    const agentTotal = this.data.reduce((s, a) => s + a.instances.reduce((t, i) => t + i.total, 0), 0);
+    const allAgents = [];
+    this.data.forEach(a => a.instances.forEach(i => i.agents.forEach(ag => allAgents.push({
+      ...ag, loc: `${a.name} · ${i.name}`, noAccess: ag.access.length === 0,
+      statusColor: ag.status === 'running' ? 'var(--ac)' : 'var(--fa)',
+      statusBg: ag.status === 'running' ? 'var(--acd)' : 'var(--sl)'
+    }))));
+    return {
+      themeOverride: theme === 'light' ? LIGHT : '',
+      themeLabel: theme === 'light' ? '◑ light' : '◐ dark',
+      toggleTheme: () => this.setState({ theme: theme === 'light' ? 'dark' : 'light' }),
+      isOverview: view === 'overview', isAgents: view === 'agents',
+      showPicker: view === 'overview' || view === 'agents', cur, curName,
+      goAgents: () => this.setState({ view: 'agents', palette: false }),
+      navAgentsStyle: view === 'agents' ? 'background:var(--acd);color:var(--ac)' : '',
+      adaptersOpen, adaptersChev: adaptersOpen ? '▾' : '▸',
+      toggleAdapters: () => this.setState({ adaptersOpen: !adaptersOpen }),
+      allAgents, agentTotal,
+      agentsNote: `Showing ${allAgents.length} of ${agentTotal} agents — the full list loads from each runtime snapshot.`,
+      goOverview: () => this.setState({ view: 'overview', palette: false }),
+      navOverviewStyle: view === 'overview' ? 'background:var(--acd);color:var(--ac)' : '',
+      adapters, adapterCount: adapters.length,
+      attention, attnCount: attention.length ? `${attention.length} item${attention.length > 1 ? 's' : ''}` : 'all clear',
+      attnEmpty: attention.length === 0,
+      sysColor: worst, sysText: attention.length ? `${attention.length} item${attention.length > 1 ? 's' : ''} need attention` : 'all systems normal',
+      lastUpdate: this.state.lastUpdate,
+      refresh: () => this.setState({ lastUpdate: 'just now' }),
+      paletteOpen: this.state.palette,
+      openPalette: () => this.setState({ palette: true }),
+      closePalette: () => this.setState({ palette: false }),
+      staleCount: staleInsts.length ? `${staleInsts.length} pending` : 'none pending',
+      fixStale: () => { staleInsts.forEach(i => { i.updated = 'just now'; i.status = 'ok'; }); this.setState({ palette: false, lastUpdate: 'just now' }); },
+      openGantry: () => this.setState({ view: 'gantry', palette: false }),
+      refreshClose: () => this.setState({ palette: false, lastUpdate: 'just now' })
+    };
+  }
+}
+</script>
+</body>
+</html>

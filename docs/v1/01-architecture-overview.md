@@ -31,7 +31,9 @@ flowchart TD
     AuditSvc["Audit Service"]
     Worker["Sync/Reconcile Worker"]
     Adapter["Gantry Adapter"]
-    Gantry["Gantry Control API"]
+    GantryDev["Gantry Development"]
+    GantryStage["Gantry Staging"]
+    GantryProd["Gantry Production"]
 
     UI --> API
     CLI --> API
@@ -50,10 +52,18 @@ flowchart TD
     RuntimeSvc --> Secrets
     ControlSvc --> Adapter
     RuntimeSvc --> Adapter
-    Adapter --> Gantry
+    Adapter --> GantryDev
+    Adapter --> GantryStage
+    Adapter --> GantryProd
     Worker --> RuntimeSvc
     Worker --> DriftSvc
 ```
+
+One stateless adapter implementation serves many runtime instances. Every
+adapter call receives a `RuntimeConnection`; the connection selects the
+endpoint and secret reference. Agent, skill, run, and execution identities are
+always scoped by `runtime_connection_id`, so identical Gantry-native IDs across
+instances cannot collide.
 
 ## Main Runtime Loop
 
@@ -145,4 +155,3 @@ internal/
 ## Boundary Rule
 
 Gantry-specific request/response structs must stay under `internal/adapters/gantry`. Domain services should operate on Capcom domain types only. Raw Gantry payloads may be stored for debugging, but they should not become the domain model.
-

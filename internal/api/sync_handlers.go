@@ -104,6 +104,25 @@ func handleListPersistedAgents(cfg RouterConfig) http.HandlerFunc {
 	}
 }
 
+func handleListInstanceAgents(cfg RouterConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cfg.RuntimeSync == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "sync_not_configured"})
+			return
+		}
+		agents, err := cfg.RuntimeSync.ListAgents(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+			return
+		}
+		out := make([]map[string]any, 0, len(agents))
+		for _, agent := range agents {
+			out = append(out, persistedAgentResponse(agent))
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
 func handleGetPersistedAgent(cfg RouterConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		detail, ok := loadPersistedAgent(w, r, cfg)
@@ -141,21 +160,35 @@ func handleListSubagentExecutions(cfg RouterConfig) http.HandlerFunc {
 			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "sync_not_configured"})
 			return
 		}
-		items, err := cfg.RuntimeSync.ListSubagentExecutions(r.Context(), r.URL.Query().Get("runtime_connection_id"), r.URL.Query().Get("agent_id"))
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		writeSubagentExecutions(w, r, cfg, r.URL.Query().Get("runtime_connection_id"), r.URL.Query().Get("agent_id"))
+	}
+}
+
+func writeSubagentExecutions(w http.ResponseWriter, r *http.Request, cfg RouterConfig, runtimeID, agentID string) {
+	items, err := cfg.RuntimeSync.ListSubagentExecutions(r.Context(), runtimeID, agentID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, map[string]any{"id": item.ID, "runtime_connection_id": item.RuntimeConnectionID,
+			"runtime_execution_id": item.RuntimeExecutionID, "parent_run_id": item.ParentRunID,
+			"runtime_agent_id": item.RuntimeAgentID, "subagent_type": item.SubagentType,
+			"status": item.Status, "description": item.Description, "summary": item.Summary,
+			"started_at": item.StartedAt, "ended_at": item.EndedAt, "observed_at": item.ObservedAt,
+			"metadata": item.Metadata})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func handleListInstanceSubagentExecutions(cfg RouterConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cfg.RuntimeSync == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "sync_not_configured"})
 			return
 		}
-		out := make([]map[string]any, 0, len(items))
-		for _, item := range items {
-			out = append(out, map[string]any{"id": item.ID, "runtime_connection_id": item.RuntimeConnectionID,
-				"runtime_execution_id": item.RuntimeExecutionID, "parent_run_id": item.ParentRunID,
-				"runtime_agent_id": item.RuntimeAgentID, "subagent_type": item.SubagentType,
-				"status": item.Status, "description": item.Description, "summary": item.Summary,
-				"started_at": item.StartedAt, "ended_at": item.EndedAt, "observed_at": item.ObservedAt,
-				"metadata": item.Metadata})
-		}
-		writeJSON(w, http.StatusOK, out)
+		writeSubagentExecutions(w, r, cfg, r.PathValue("id"), r.URL.Query().Get("agent_id"))
 	}
 }
 

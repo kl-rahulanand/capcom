@@ -122,6 +122,28 @@ paths:
           $ref: "#/components/responses/Error"
         "503":
           $ref: "#/components/responses/Error"
+    patch:
+      summary: Update mutable runtime instance identity
+      operationId: updateRuntimeInstanceIdentity
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRuntimeInstanceIdentityRequest"
+      responses:
+        "200":
+          description: Updated runtime instance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeConnection"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /v1/runtime-connections/{id}/test:
     post:
       summary: Test a runtime connection through its adapter
@@ -276,6 +298,69 @@ paths:
                 $ref: "#/components/schemas/RuntimeSyncRun"
         "404":
           $ref: "#/components/responses/Error"
+  /v1/runtime-instances:
+    $ref: "#/paths/~1v1~1runtime-connections"
+  /v1/runtime-instances/{id}:
+    $ref: "#/paths/~1v1~1runtime-connections~1{id}"
+  /v1/runtime-instances/{id}/test:
+    $ref: "#/paths/~1v1~1runtime-connections~1{id}~1test"
+  /v1/runtime-instances/{id}/sync:
+    $ref: "#/paths/~1v1~1runtime-connections~1{id}~1sync"
+  /v1/runtime-instances/{id}/sync-runs:
+    $ref: "#/paths/~1v1~1runtime-connections~1{id}~1sync-runs"
+  /v1/runtime-instances/{id}/agents:
+    get:
+      summary: List persisted agents belonging to one runtime instance
+      operationId: listRuntimeInstanceAgents
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+      responses:
+        "200":
+          description: Instance-scoped persisted agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PersistedAgent"
+  /v1/runtime-instances/{id}/subagent-executions:
+    get:
+      summary: List ephemeral delegated executions belonging to one runtime instance
+      operationId: listRuntimeInstanceSubagentExecutions
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Instance-scoped delegated execution observations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SubagentExecution"
+  /v1/runtime-instances/{id}/live/agents:
+    get:
+      summary: Read live agents through one runtime instance adapter
+      operationId: listRuntimeInstanceLiveAgents
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+      responses:
+        "200":
+          description: Runtime-normalized live agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeAgent"
+  /v1/runtime-instances/{id}/live/agents/{agentID}/skills:
+    $ref: "#/paths/~1v1~1runtime-connections~1{id}~1agents~1{agentID}~1skills"
+  /v1/runtime-instances/{id}/live/agents/{agentID}/access:
+    $ref: "#/paths/~1v1~1runtime-connections~1{id}~1agents~1{agentID}~1access"
   /v1/agents:
     get:
       summary: List persisted runtime agents with freshness metadata
@@ -434,7 +519,19 @@ components:
       properties:
         name:
           type: string
-          example: local-gantry
+          example: gantry-development
+          description: Stable unique instance key.
+        display_name:
+          type: string
+          example: Gantry Development
+        environment:
+          type: string
+          pattern: "^[a-z][a-z0-9_-]{0,31}$"
+          example: development
+        labels:
+          type: object
+          additionalProperties:
+            type: string
         runtime_type:
           type: string
           enum: [gantry]
@@ -458,11 +555,38 @@ components:
           type: string
     RuntimeConnection:
       type: object
-      required: [id, name, runtime_type, mode, status, endpoint, auth_ref, created_at, updated_at]
+      required: [id, name, display_name, environment, labels, runtime_type, mode, status, endpoint, auth_ref, created_at, updated_at]
       properties:
         id:
           type: string
         name:
+          type: string
+        display_name:
+          type: string
+        environment:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        description:
+          type: string
+    UpdateRuntimeInstanceIdentityRequest:
+      type: object
+      required: [display_name, environment, actor, reason]
+      properties:
+        display_name:
+          type: string
+        environment:
+          type: string
+          pattern: "^[a-z][a-z0-9_-]{0,31}$"
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        actor:
+          type: string
+        reason:
           type: string
         runtime_type:
           type: string

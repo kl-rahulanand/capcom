@@ -30,6 +30,10 @@ GET /readyz
 
 ## Runtime Connections
 
+The user-facing name is **runtime instance**. `runtime_connections` remains the
+internal persistence name and the older `/v1/runtime-connections` routes remain
+compatibility aliases.
+
 ```text
 POST /v1/runtime-connections
 GET /v1/runtime-connections
@@ -41,7 +45,22 @@ GET /v1/runtime-connections/{id}/sync-runs
 GET /v1/runtime-connections/{id}/agents
 GET /v1/runtime-connections/{id}/agents/{runtimeAgentId}/access
 GET /v1/runtime-connections/{id}/agents/{runtimeAgentId}/skills
+
+POST /v1/runtime-instances
+GET /v1/runtime-instances
+GET /v1/runtime-instances/{id}
+PATCH /v1/runtime-instances/{id}
+POST /v1/runtime-instances/{id}/test
+POST /v1/runtime-instances/{id}/sync
+GET /v1/runtime-instances/{id}/sync-runs
+GET /v1/runtime-instances/{id}/agents
+GET /v1/runtime-instances/{id}/subagent-executions
+GET /v1/runtime-instances/{id}/live/agents
 ```
+
+Instance-scoped `/agents` and `/subagent-executions` return persisted state.
+The explicit `/live/agents` route performs a diagnostic adapter read. Fleet-wide
+`/v1/agents` remains available, but instance views must use the nested routes.
 
 Runtime connection creation uses `auth_ref`, which must name a previously
 stored secret. Inline runtime credentials are rejected.

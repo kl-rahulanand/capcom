@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	runtimeadapter "capcom/internal/adapters/runtime"
@@ -27,19 +28,37 @@ func TestRuntimeConnectionServiceCreate(t *testing.T) {
 	service := NewRuntimeConnectionService(fakeRuntimeRepo{}, fakeAuditRepo{}).WithCredentialResolver(fakeCredentialResolver{})
 
 	conn, err := service.Create(context.Background(), CreateRuntimeConnectionInput{
-		Name:     "local-gantry",
-		Kind:     domain.RuntimeKindGantry,
-		Mode:     domain.RuntimeModeReadOnly,
-		Endpoint: "http://127.0.0.1:3000",
-		AuthRef:  "gantry-key",
-		Actor:    "test",
-		Reason:   "integration setup",
+		Name:        "local-gantry",
+		DisplayName: "Gantry Development",
+		Environment: "development",
+		Labels:      map[string]string{"Team": "Platform"},
+		Kind:        domain.RuntimeKindGantry,
+		Mode:        domain.RuntimeModeReadOnly,
+		Endpoint:    "http://127.0.0.1:3000",
+		AuthRef:     "gantry-key",
+		Actor:       "test",
+		Reason:      "integration setup",
 	})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
 	if conn.Status != domain.RuntimeStatusPending {
 		t.Fatalf("status = %q, want %q", conn.Status, domain.RuntimeStatusPending)
+	}
+	if conn.DisplayName != "Gantry Development" || conn.Environment != "development" || conn.Labels["team"] != "Platform" {
+		t.Fatalf("instance identity = %#v", conn)
+	}
+}
+
+func TestRuntimeConnectionServiceRoutesSameAgentIDToSelectedInstance(t *testing.T) {
+	adapter := &recordingAdapter{}
+	service := NewRuntimeConnectionService(multiRuntimeRepo{}, nil).WithAdapter(adapter)
+
+	if _, err := service.ListAgents(context.Background(), "runtime-staging"); err != nil {
+		t.Fatalf("ListAgents returned error: %v", err)
+	}
+	if adapter.connection.ID != "runtime-staging" || adapter.connection.BaseURL != "http://127.0.0.1:8788" || adapter.connection.AuthRef != "gantry-staging-key" {
+		t.Fatalf("adapter received wrong instance: %#v", adapter.connection)
 	}
 }
 
@@ -90,6 +109,10 @@ func (fakeRuntimeRepo) Create(_ context.Context, conn domain.RuntimeConnection) 
 	return conn, nil
 }
 
+func (fakeRuntimeRepo) UpdateIdentity(_ context.Context, conn domain.RuntimeConnection) (domain.RuntimeConnection, error) {
+	return conn, nil
+}
+
 func (fakeRuntimeRepo) Get(_ context.Context, id string) (domain.RuntimeConnection, error) {
 	return domain.RuntimeConnection{ID: id, Name: "runtime", Kind: domain.RuntimeKindGantry, AuthRef: "gantry-key"}, nil
 }
@@ -97,6 +120,24 @@ func (fakeRuntimeRepo) Get(_ context.Context, id string) (domain.RuntimeConnecti
 func (fakeRuntimeRepo) List(context.Context) ([]domain.RuntimeConnection, error) {
 	return []domain.RuntimeConnection{{ID: "runtime-1", Name: "runtime"}}, nil
 }
+
+type multiRuntimeRepo struct{}
+
+func (multiRuntimeRepo) Create(context.Context, domain.RuntimeConnection) (domain.RuntimeConnection, error) {
+	return domain.RuntimeConnection{}, fmt.Errorf("not implemented")
+}
+func (multiRuntimeRepo) UpdateIdentity(_ context.Context, conn domain.RuntimeConnection) (domain.RuntimeConnection, error) {
+	return conn, nil
+}
+func (multiRuntimeRepo) Get(_ context.Context, id string) (domain.RuntimeConnection, error) {
+	ports := map[string]string{"runtime-dev": "8787", "runtime-staging": "8788"}
+	port, ok := ports[id]
+	if !ok {
+		return domain.RuntimeConnection{}, fmt.Errorf("unknown runtime %q", id)
+	}
+	return domain.RuntimeConnection{ID: id, Kind: domain.RuntimeKindGantry, BaseURL: "http://127.0.0.1:" + port, AuthRef: "gantry-" + id[len("runtime-"):] + "-key"}, nil
+}
+func (multiRuntimeRepo) List(context.Context) ([]domain.RuntimeConnection, error) { return nil, nil }
 
 type fakeAuditRepo struct{}
 
@@ -106,6 +147,34 @@ func (fakeAuditRepo) Create(_ context.Context, event domain.AuditEvent) (domain.
 }
 
 type fakeAdapter struct{}
+
+type recordingAdapter struct{ connection domain.RuntimeConnection }
+
+func (a *recordingAdapter) Kind() domain.RuntimeKind { return domain.RuntimeKindGantry }
+func (a *recordingAdapter) Check(_ context.Context, conn domain.RuntimeConnection) (*runtimeadapter.CheckResult, error) {
+	a.connection = conn
+	return &runtimeadapter.CheckResult{}, nil
+}
+func (a *recordingAdapter) ListAgents(_ context.Context, conn domain.RuntimeConnection) ([]domain.AgentSnapshot, error) {
+	a.connection = conn
+	return []domain.AgentSnapshot{{RuntimeAgentID: "agent:main_agent"}}, nil
+}
+func (a *recordingAdapter) ListAgentSkills(_ context.Context, conn domain.RuntimeConnection, _ string) ([]domain.AgentSkillSnapshot, error) {
+	a.connection = conn
+	return nil, nil
+}
+func (a *recordingAdapter) GetAgentAccess(_ context.Context, conn domain.RuntimeConnection, _ string) (*domain.AccessDocument, error) {
+	a.connection = conn
+	return &domain.AccessDocument{}, nil
+}
+func (a *recordingAdapter) ReplaceAgentAccess(_ context.Context, conn domain.RuntimeConnection, _ string, _ domain.AccessDocument) (*domain.AccessDocument, error) {
+	a.connection = conn
+	return &domain.AccessDocument{}, nil
+}
+func (a *recordingAdapter) CollectSnapshot(_ context.Context, conn domain.RuntimeConnection) (*domain.RuntimeSnapshot, error) {
+	a.connection = conn
+	return &domain.RuntimeSnapshot{}, nil
+}
 
 type fakeCredentialResolver struct{}
 
