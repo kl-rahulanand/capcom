@@ -86,7 +86,7 @@ docs/
 
 Brings up the whole stack — Postgres, migrations, the Go API, and the Next.js console:
 
-```powershell
+```bash
 docker compose up --build
 ```
 
@@ -100,13 +100,13 @@ Next.js server proxies API calls and injects the admin token server-side (see
 
 For backend development, copy the example environment file once:
 
-```powershell
-Copy-Item .env.example .env
+```bash
+cp .env.example .env
 ```
 
 Then run the server:
 
-```powershell
+```bash
 make run
 ```
 
@@ -121,7 +121,7 @@ Default server address:
 The primary console is a separate Next.js + shadcn app in `web/`. To run it against a
 backend started with `make run`:
 
-```powershell
+```bash
 cd web
 npm install        # first time only
 npm run dev        # http://localhost:3000
@@ -145,8 +145,8 @@ selected instance.
 
 Health check:
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8080/healthz
+```bash
+curl http://127.0.0.1:8080/healthz
 ```
 
 Expected response:
@@ -161,7 +161,7 @@ Expected response:
 
 Run with the local development database:
 
-```powershell
+```bash
 make migrate-up
 make run
 ```
@@ -190,7 +190,7 @@ make run
 
 ## Development Commands
 
-```powershell
+```bash
 make test
 make vet
 make tidy
@@ -200,7 +200,7 @@ make run
 
 Equivalent direct Go commands:
 
-```powershell
+```bash
 go test ./...
 go vet ./...
 go mod tidy
@@ -219,8 +219,8 @@ Capcom uses Postgres for V1 persistence. Local development values live in `.env`
 
 For a new checkout:
 
-```powershell
-Copy-Item .env.example .env
+```bash
+cp .env.example .env
 make migrate-up
 ```
 
@@ -254,50 +254,39 @@ The initial schema creates:
 
 ## Runtime Connection API
 
-Generate a local Capcom encryption key once and add it to `.env`:
+Generate a local Capcom encryption key once and add it to `.env` as
+`CAPCOM_SECRET_KEY=<value>` (base64-encoded 32-byte key):
 
-```powershell
-$bytes = New-Object byte[] 32
-$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
-$key = [Convert]::ToBase64String($bytes)
-$content = Get-Content .env | Where-Object { $_ -notmatch '^CAPCOM_SECRET_KEY=' }
-Set-Content .env ($content + "CAPCOM_SECRET_KEY=$key")
+```bash
+openssl rand -base64 32
 ```
 
-Set a separate high-entropy `CAPCOM_ADMIN_TOKEN` in `.env`, then use it for API
-requests:
-
-```powershell
-$capcomAdminToken = "<value from CAPCOM_ADMIN_TOKEN>"
-$capcomHeaders = @{ Authorization = "Bearer $capcomAdminToken" }
-```
+Set a separate high-entropy `CAPCOM_ADMIN_TOKEN` in `.env`. Every `/v1` request must send
+it as `Authorization: Bearer <admin-token>` (only `GET /healthz` is unauthenticated). The
+examples below use `curl`, which is available on Linux, macOS, and Windows 10+; substitute
+your admin token for `<admin-token>`.
 
 Store the Gantry Control API token. The response contains metadata only:
 
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri http://127.0.0.1:8080/v1/secrets `
-  -ContentType "application/json" `
-  -Headers $capcomHeaders `
-  -Body (@{
-    name = "gantry-control-api-key"
-    value = $gantryToken
-    actor = "local-dev"
-    reason = "configure Gantry authentication"
-  } | ConvertTo-Json)
+```bash
+curl -X POST http://127.0.0.1:8080/v1/secrets \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "gantry-control-api-key",
+    "value": "<gantry-token>",
+    "actor": "local-dev",
+    "reason": "configure Gantry authentication"
+  }'
 ```
 
 Create a Gantry runtime connection:
 
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri http://127.0.0.1:8080/v1/runtime-connections `
-  -ContentType "application/json" `
-  -Headers $capcomHeaders `
-  -Body '{
+```bash
+curl -X POST http://127.0.0.1:8080/v1/runtime-connections \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
     "name": "local-gantry",
     "runtime_type": "gantry",
     "mode": "read_only",
@@ -310,47 +299,44 @@ Invoke-RestMethod `
 
 List runtime connections:
 
-```powershell
-Invoke-RestMethod -Headers $capcomHeaders http://127.0.0.1:8080/v1/runtime-connections
+```bash
+curl http://127.0.0.1:8080/v1/runtime-connections \
+  -H "Authorization: Bearer <admin-token>"
 ```
 
 Get one runtime connection:
 
-```powershell
-Invoke-RestMethod -Headers $capcomHeaders http://127.0.0.1:8080/v1/runtime-connections/<runtime-id>
+```bash
+curl http://127.0.0.1:8080/v1/runtime-connections/<runtime-id> \
+  -H "Authorization: Bearer <admin-token>"
 ```
 
 Test a runtime connection through its adapter:
 
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri http://127.0.0.1:8080/v1/runtime-connections/<runtime-id>/test `
-  -Headers $capcomHeaders
+```bash
+curl -X POST http://127.0.0.1:8080/v1/runtime-connections/<runtime-id>/test \
+  -H "Authorization: Bearer <admin-token>"
 ```
 
 Read live agents through the configured adapter:
 
-```powershell
-Invoke-RestMethod `
-  -Headers $capcomHeaders `
-  http://127.0.0.1:8080/v1/runtime-connections/<runtime-id>/agents
+```bash
+curl http://127.0.0.1:8080/v1/runtime-connections/<runtime-id>/agents \
+  -H "Authorization: Bearer <admin-token>"
 ```
 
 Read one live agent's canonical access document:
 
-```powershell
-Invoke-RestMethod `
-  -Headers $capcomHeaders `
-  http://127.0.0.1:8080/v1/runtime-connections/<runtime-id>/agents/<runtime-agent-id>/access
+```bash
+curl http://127.0.0.1:8080/v1/runtime-connections/<runtime-id>/agents/<runtime-agent-id>/access \
+  -H "Authorization: Bearer <admin-token>"
 ```
 
 Read one live agent's current skill bindings:
 
-```powershell
-Invoke-RestMethod `
-  -Headers $capcomHeaders `
-  http://127.0.0.1:8080/v1/runtime-connections/<runtime-id>/agents/<runtime-agent-id>/skills
+```bash
+curl http://127.0.0.1:8080/v1/runtime-connections/<runtime-id>/agents/<runtime-agent-id>/skills \
+  -H "Authorization: Bearer <admin-token>"
 ```
 
 These nested agent endpoints are inspection reads. The upcoming sync loop will
@@ -360,17 +346,15 @@ Runtime connection APIs return `503 database_not_configured` when the server is 
 
 Rotate a stored credential without changing runtime connections:
 
-```powershell
-Invoke-RestMethod `
-  -Method Put `
-  -Uri http://127.0.0.1:8080/v1/secrets/gantry-control-api-key `
-  -ContentType "application/json" `
-  -Headers $capcomHeaders `
-  -Body (@{
-    value = $newGantryToken
-    actor = "local-dev"
-    reason = "scheduled credential rotation"
-  } | ConvertTo-Json)
+```bash
+curl -X PUT http://127.0.0.1:8080/v1/secrets/gantry-control-api-key \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "value": "<new-gantry-token>",
+    "actor": "local-dev",
+    "reason": "scheduled credential rotation"
+  }'
 ```
 
 Capcom never returns secret values. Keep `CAPCOM_SECRET_KEY` stable: changing it
