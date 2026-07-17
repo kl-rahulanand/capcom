@@ -40,7 +40,15 @@ Implementation has started with the first backend slices:
 - Live, cached, and stale freshness semantics with last-known-state retention.
 - Sync history and database-backed overlap protection.
 - Audited, idempotent access reconciliation with read-only rejection and dry-run validation.
-- Unit tests for config and API health behavior.
+- Next.js + shadcn/ui operator console in `web/` (dark-first with a light theme), a
+  separate frontend that calls the Go API.
+- Server-side API proxy in the console injects the admin token, so the browser needs no
+  token and there is no login dialog.
+- In-console add-instance flow: adapter picker plus a credential form that stores the
+  runtime secret and creates the runtime instance.
+- Configurable CORS via `CAPCOM_CORS_ALLOWED_ORIGINS`, with preflight `OPTIONS` bypassing admin auth.
+- Docker Compose stack (Postgres + migrations + API + console).
+- Unit tests for config, API health, and CORS behavior.
 
 The next implementation slice is desired-state manifest apply followed by drift
 detection against the durable runtime snapshots.
@@ -53,21 +61,44 @@ cmd/
   capcom/               # CLI entrypoint
 internal/
   adapters/runtime/     # Runtime-neutral adapter interface
-  api/                  # HTTP router, handlers, and embedded console
+  api/                  # HTTP router, handlers, and legacy embedded console
   config/               # Environment config
   domain/               # Runtime-neutral Capcom domain types
   store/                # Postgres connection, migrations, repositories
+web/                    # Next.js + shadcn operator console (primary UI)
 migrations/             # SQL migrations
 api/
   openapi.yaml          # Current REST API contract
+Dockerfile              # Go API + capcom CLI image
+docker-compose.yml      # Postgres + migrations + API + console
 docs/
   v1/                   # V1 architecture and implementation docs
+  console-redesign/     # Console rebuild build spec + design handoff
   Architecture/         # Architecture diagram assets
 ```
 
+> The console UI now lives in `web/` as a separate Next.js app. The static console
+> embedded in `internal/api/ui/` is legacy and kept only so the Go binary still builds.
+
 ## Run Locally
 
-For local development, copy the example environment file once:
+### With Docker (recommended)
+
+Brings up the whole stack — Postgres, migrations, the Go API, and the Next.js console:
+
+```powershell
+docker compose up --build
+```
+
+Then open the console at `http://localhost:3000`. There is no login dialog: the console's
+Next.js server proxies API calls and injects the admin token server-side (see
+`docker-compose.yml`, which uses clearly-labeled dev-only credentials). Add a runtime with
+**+ Add instance** → pick an adapter → paste the runtime token. Stop with
+`docker compose down` (add `-v` to also drop the Postgres volume).
+
+### Backend only (Go)
+
+For backend development, copy the example environment file once:
 
 ```powershell
 Copy-Item .env.example .env
@@ -85,9 +116,21 @@ Default server address:
 :8080
 ```
 
-Open the verification console at `http://127.0.0.1:8080/`. Enter the value of
-`CAPCOM_ADMIN_TOKEN` in the connection dialog; the token is kept in session
-storage and is cleared when the browser tab closes.
+### Frontend console (web/)
+
+The primary console is a separate Next.js + shadcn app in `web/`. To run it against a
+backend started with `make run`:
+
+```powershell
+cd web
+npm install        # first time only
+npm run dev        # http://localhost:3000
+```
+
+Point it at the API with `NEXT_PUBLIC`-free server env: set `CAPCOM_API_URL` (default
+`http://127.0.0.1:8081`) and `CAPCOM_ADMIN_TOKEN` for the console's server-side proxy. See
+[web/README.md](web/README.md). The legacy embedded console remains at
+`http://127.0.0.1:8080/` (enter `CAPCOM_ADMIN_TOKEN` in its dialog) until it is retired.
 
 The Agents view separates durable Gantry agents from ephemeral subagent
 executions. Gantry must have emitted a `delegated_agent` task lifecycle event
