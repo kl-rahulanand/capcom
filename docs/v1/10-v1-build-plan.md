@@ -179,12 +179,18 @@ Manual tests:
 ## Explicit Post-V1 Backlog
 
 - full RBAC/SSO
-- webhooks
+- signed Gantry webhook inbox, deduplication, and targeted-sync triggers
 - enforce mode
 - Kubernetes operator
-- OpenTelemetry/OpenInference ingestion
-- LangSmith/Langfuse/Phoenix adapters
+- LangGraph Agent Server audited control actions (read-only adapter implemented 2026-07-21)
+- Amazon Bedrock AgentCore runtime adapter
+- Microsoft Foundry Agent Service runtime adapter
+- Vertex AI Agent Engine runtime adapter
+- OpenTelemetry/OpenInference ingestion for embedded agents
+- LangSmith observability, Langfuse, and Phoenix telemetry connectors
 - Microsoft/identity registry integrations
 - business value and topology metadata
 - multi-runtime adapter marketplace
 
+See `16-adapter-roadmap-and-webhook-plan.md` for the Gantry completion matrix,
+webhook design, adapter ranking, and enterprise deployment research.

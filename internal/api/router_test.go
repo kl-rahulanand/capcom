@@ -207,6 +207,46 @@ func TestRuntimeInstancePersistedAgentsAreScoped(t *testing.T) {
 	}
 }
 
+func TestAgentDelegationsAreAgentScoped(t *testing.T) {
+	syncService := &fakeRuntimeSyncService{}
+	router := NewRouter(RouterConfig{Version: "test", AdminToken: "test-admin-token", RuntimeSync: syncService}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	req := authenticatedRequest(http.MethodGet, "/v1/agents/agent-1/delegations", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if syncService.agentID != "agent-1" {
+		t.Fatalf("agent id = %q", syncService.agentID)
+	}
+	var got []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0]["delegate_runtime_agent_id"] != "agent:reviewer" {
+		t.Fatalf("response = %#v", got)
+	}
+}
+
+func TestRuntimeCatalogEndpointsRequireSyncService(t *testing.T) {
+	router := NewRouter(RouterConfig{Version: "test", AdminToken: "test-admin-token"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	paths := []string{
+		"/v1/runtime-instances/runtime-1/diagnostics",
+		"/v1/runtime-instances/runtime-1/inventory",
+		"/v1/runtime-instances/runtime-1/capabilities",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			req := authenticatedRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestCreateSecretDoesNotReturnValue(t *testing.T) {
 	router := NewRouter(RouterConfig{Version: "test", AdminToken: "test-admin-token", Secrets: fakeSecretService{}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	req := authenticatedRequest(http.MethodPost, "/v1/secrets", bytes.NewBufferString(`{
@@ -380,7 +420,10 @@ func authenticatedRequest(method, target string, body io.Reader) *http.Request {
 
 type fakeRuntimeConnectionService struct{}
 
-type fakeRuntimeSyncService struct{ runtimeID string }
+type fakeRuntimeSyncService struct {
+	runtimeID string
+	agentID   string
+}
 
 func (*fakeRuntimeSyncService) Sync(context.Context, services.SyncRuntimeInput) (domain.RuntimeSyncRun, error) {
 	return domain.RuntimeSyncRun{}, nil
@@ -400,6 +443,27 @@ func (*fakeRuntimeSyncService) GetAgent(context.Context, string) (domain.Persist
 }
 func (*fakeRuntimeSyncService) ListSubagentExecutions(context.Context, string, string) ([]domain.PersistedSubagentExecution, error) {
 	return nil, nil
+}
+
+func (*fakeRuntimeSyncService) ListRuntimeExecutions(context.Context, string, string, string, int) ([]domain.PersistedRuntimeExecution, error) {
+	return nil, nil
+}
+func (*fakeRuntimeSyncService) ListRuntimeDiagnostics(context.Context, string) ([]domain.PersistedRuntimeDiagnostic, error) {
+	return nil, nil
+}
+func (*fakeRuntimeSyncService) ListRuntimeInventory(context.Context, string, string) ([]domain.PersistedRuntimeInventory, error) {
+	return nil, nil
+}
+func (*fakeRuntimeSyncService) ListRuntimeCapabilities(context.Context, string) ([]domain.PersistedRuntimeCapability, error) {
+	return nil, nil
+}
+func (s *fakeRuntimeSyncService) ListAgentDelegations(_ context.Context, runtimeID, agentID string) ([]domain.PersistedAgentDelegation, error) {
+	s.runtimeID = runtimeID
+	s.agentID = agentID
+	return []domain.PersistedAgentDelegation{{RuntimeConnectionID: "runtime-1", AgentDelegationSnapshot: domain.AgentDelegationSnapshot{
+		OrchestratorRuntimeAgentID: "agent:main", DelegateRuntimeAgentID: "agent:reviewer",
+		DelegateRef: "reviewer", DisplayName: "Reviewer", Configured: true, Resolved: true,
+	}}}, nil
 }
 
 func (fakeRuntimeConnectionService) Create(_ context.Context, input services.CreateRuntimeConnectionInput) (domain.RuntimeConnection, error) {

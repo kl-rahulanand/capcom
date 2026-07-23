@@ -14,6 +14,7 @@ Implementation has started with the first backend slices:
 - `GET /healthz` endpoint.
 - Runtime-neutral domain shell.
 - Runtime adapter interface for Gantry and future adapters.
+- LangGraph Agent Server read-only adapter with `X-Api-Key` authentication.
 - `.env` loading for local development.
 - OpenAPI contract at `api/openapi.yaml`.
 - Postgres configuration.
@@ -25,6 +26,7 @@ Implementation has started with the first backend slices:
 - Runtime connection REST APIs.
 - Multi-instance identity with stable keys, display names, environments, labels, and isolated credentials.
 - Gantry runtime adapter read-path health check.
+- Gantry doctor diagnostics plus normalized tool, skill, MCP server, and capability catalogs.
 - Runtime connection test endpoint.
 - AES-256-GCM encrypted runtime secret storage.
 - Audited secret creation and rotation APIs.
@@ -33,13 +35,18 @@ Implementation has started with the first backend slices:
 - Embedded Capcom verification console served by the Go binary.
 - Live runtime-neutral agent and access inspection through the selected adapter.
 - Main/registered/subagent classification and live current-skill inspection.
+- Durable Gantry agent-to-agent delegation edges with configured, resolved, and conversation-bound provenance.
 - Gantry delegated-task ingestion as separate ephemeral subagent executions.
+- LangGraph assistant inventory plus runtime-neutral thread/run execution ingestion.
+- Expandable LangGraph thread/run activity in each runtime instance panel.
 - Selected-agent details with enriched skill descriptions, tools, workflows, and effective access.
 - Transactional manual and periodic runtime synchronization.
 - Persisted agents, hierarchy, assigned skills, and effective access.
+- Agent detail views show callable delegates, reverse "delegated by" relationships, harness, persona, and callable tool identity.
 - Live, cached, and stale freshness semantics with last-known-state retention.
 - Sync history and database-backed overlap protection.
 - Audited, idempotent access reconciliation with read-only rejection and dry-run validation.
+- Audited Gantry agent enable/disable actions with dry-run validation and post-action verification sync.
 - Next.js + shadcn/ui operator console in `web/` (dark-first with a light theme), a
   separate frontend that calls the Go API.
 - Server-side API proxy in the console injects the admin token, so the browser needs no
@@ -49,6 +56,8 @@ Implementation has started with the first backend slices:
 - Configurable CORS via `CAPCOM_CORS_ALLOWED_ORIGINS`, with preflight `OPTIONS` bypassing admin auth.
 - Docker Compose stack (Postgres + migrations + API + console).
 - Unit tests for config, API health, and CORS behavior.
+- Post-V1 signed Gantry webhook receiver documented; the LangGraph Agent Server read-only adapter is implemented and live-tested.
+- Generic persisted runtime executions with instance, agent, kind, and parent filtering.
 
 The next implementation slice is desired-state manifest apply followed by drift
 detection against the durable runtime snapshots.
@@ -61,12 +70,15 @@ cmd/
   capcom/               # CLI entrypoint
 internal/
   adapters/runtime/     # Runtime-neutral adapter interface
+  adapters/langgraph/   # LangGraph Agent Server adapter and contract fixtures
   api/                  # HTTP router, handlers, and legacy embedded console
   config/               # Environment config
   domain/               # Runtime-neutral Capcom domain types
   store/                # Postgres connection, migrations, repositories
 web/                    # Next.js + shadcn operator console (primary UI)
 migrations/             # SQL migrations
+examples/
+  langgraph-agent-server/ # Deterministic local Agent Server fixture
 api/
   openapi.yaml          # Current REST API contract
 Dockerfile              # Go API + capcom CLI image
@@ -84,7 +96,7 @@ docs/
 
 ### With Docker (recommended)
 
-Brings up the whole stack — Postgres, migrations, the Go API, and the Next.js console:
+Brings up the whole stack: Postgres, migrations, the Go API, and the Next.js console:
 
 ```bash
 docker compose up --build
@@ -93,7 +105,7 @@ docker compose up --build
 Then open the console at `http://localhost:3000`. There is no login dialog: the console's
 Next.js server proxies API calls and injects the admin token server-side (see
 `docker-compose.yml`, which uses clearly-labeled dev-only credentials). Add a runtime with
-**+ Add instance** → pick an adapter → paste the runtime token. Stop with
+**+ Add instance**, pick an adapter, then paste the runtime token. Stop with
 `docker compose down` (add `-v` to also drop the Postgres volume).
 
 ### Backend only (Go)
@@ -142,6 +154,19 @@ runtime instances. Give each installation a unique endpoint, secret reference,
 stable key, display name, and environment. The console selector shows all three
 identity signals and keeps agents and delegated executions scoped to the
 selected instance.
+
+The Docker development API resolves host-side Gantry instances through the
+`gantry.internal` host-gateway alias declared in `docker-compose.yml`. Use
+endpoints such as `http://gantry.internal:8787`, `:8788`, and `:8789` when
+Capcom runs in Docker; loopback endpoints only work when the API runs on the
+host.
+
+Local LangGraph Agent Server instances use the same host-gateway pattern. Start
+the deterministic fixture in `examples/langgraph-agent-server` on port `2024`,
+then register `http://langgraph.internal:2024` as a read-only `langgraph`
+runtime. Local `langgraph dev` has no-op authentication, so use a non-empty
+local-only secret placeholder; hosted deployments require a real LangSmith API
+key. See the [LangGraph adapter contract](docs/v1/17-langgraph-agent-server-adapter.md).
 
 Health check:
 
@@ -391,6 +416,8 @@ Important docs:
 - [Go coding rulebook](C:/Users/caw-dev/Desktop/capcom/docs/v1/12-go-coding-rulebook.md)
 - [Architecture overview](C:/Users/caw-dev/Desktop/capcom/docs/v1/01-architecture-overview.md)
 - [Gantry adapter contract](C:/Users/caw-dev/Desktop/capcom/docs/v1/03-gantry-adapter-contract.md)
+- [Adapter roadmap and webhook plan](docs/v1/16-adapter-roadmap-and-webhook-plan.md)
+- [LangGraph Agent Server adapter](docs/v1/17-langgraph-agent-server-adapter.md)
 
 ## Implementation Rule
 

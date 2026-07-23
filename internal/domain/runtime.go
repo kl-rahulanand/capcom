@@ -5,7 +5,8 @@ import "time"
 type RuntimeKind string
 
 const (
-	RuntimeKindGantry RuntimeKind = "gantry"
+	RuntimeKindGantry    RuntimeKind = "gantry"
+	RuntimeKindLangGraph RuntimeKind = "langgraph"
 )
 
 type RuntimeMode string

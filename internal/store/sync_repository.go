@@ -114,7 +114,34 @@ func (r SyncRepository) PersistSnapshot(ctx context.Context, run domain.RuntimeS
 			skillCount++
 			bindingCount++
 		}
-		if err := upsertActualAccess(ctx, tx, run, agentID, item.Access); err != nil {
+		if item.Access.Source != "" {
+			if err := upsertActualAccess(ctx, tx, run, agentID, item.Access); err != nil {
+				return run, err
+			}
+		}
+	}
+	for _, execution := range snapshot.Executions {
+		if err := upsertRuntimeExecution(ctx, tx, run.RuntimeConnectionID, execution); err != nil {
+			return run, err
+		}
+	}
+	for _, diagnostic := range snapshot.Diagnostics {
+		if err := upsertRuntimeDiagnostic(ctx, tx, run.RuntimeConnectionID, diagnostic); err != nil {
+			return run, err
+		}
+	}
+	for _, item := range snapshot.Inventory {
+		if err := upsertRuntimeInventory(ctx, tx, run.RuntimeConnectionID, item); err != nil {
+			return run, err
+		}
+	}
+	for _, capability := range snapshot.CapabilityCatalog {
+		if err := upsertRuntimeCapability(ctx, tx, run.RuntimeConnectionID, capability); err != nil {
+			return run, err
+		}
+	}
+	for _, delegation := range snapshot.AgentDelegations {
+		if err := upsertAgentDelegation(ctx, tx, run, delegation); err != nil {
 			return run, err
 		}
 	}
@@ -148,6 +175,14 @@ status = CASE WHEN missing_successful_syncs + 1 >= $3 THEN 'stale' ELSE status E
 WHERE runtime_connection_id = $1 AND (last_seen_sync_run_id IS NULL OR last_seen_sync_run_id <> $2)`, run.RuntimeConnectionID, run.ID, missingThreshold); err != nil {
 		return run, fmt.Errorf("advance missing runtime skills: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE agent_delegations SET missing_successful_syncs = missing_successful_syncs + 1,
+status = CASE WHEN missing_successful_syncs + 1 >= $3 THEN 'stale' ELSE status END,
+updated_at = now()
+WHERE runtime_connection_id = $1 AND (last_seen_sync_run_id IS NULL OR last_seen_sync_run_id <> $2)`,
+		run.RuntimeConnectionID, run.ID, missingThreshold); err != nil {
+		return run, fmt.Errorf("advance missing agent delegations: %w", err)
+	}
 
 	finished := time.Now().UTC()
 	run.Status = domain.SyncStatusSucceeded
@@ -156,11 +191,23 @@ WHERE runtime_connection_id = $1 AND (last_seen_sync_run_id IS NULL OR last_seen
 	run.AgentsSeen = len(snapshot.Agents)
 	run.SkillsSeen = skillCount
 	run.BindingsSeen = bindingCount
-	run.AccessDocumentsSeen = len(snapshot.Agents)
+	for _, item := range snapshot.Agents {
+		if item.Access.Source != "" {
+			run.AccessDocumentsSeen++
+		}
+	}
+	run.ExecutionsSeen = len(snapshot.Executions)
+	run.DiagnosticsSeen = len(snapshot.Diagnostics)
+	run.InventorySeen = len(snapshot.Inventory)
+	run.CapabilitiesSeen = len(snapshot.CapabilityCatalog)
+	run.DelegationsSeen = len(snapshot.AgentDelegations)
 	if _, err := tx.ExecContext(ctx, `
 UPDATE runtime_sync_runs SET status = 'succeeded', finished_at = $2, duration_ms = $3,
-agents_seen = $4, skills_seen = $5, bindings_seen = $6, access_documents_seen = $7
-WHERE id = $1`, run.ID, finished, run.DurationMS, run.AgentsSeen, run.SkillsSeen, run.BindingsSeen, run.AccessDocumentsSeen); err != nil {
+agents_seen = $4, skills_seen = $5, bindings_seen = $6, access_documents_seen = $7, executions_seen = $8,
+diagnostics_seen = $9, inventory_seen = $10, capabilities_seen = $11, delegations_seen = $12
+WHERE id = $1`, run.ID, finished, run.DurationMS, run.AgentsSeen, run.SkillsSeen, run.BindingsSeen,
+		run.AccessDocumentsSeen, run.ExecutionsSeen, run.DiagnosticsSeen, run.InventorySeen, run.CapabilitiesSeen,
+		run.DelegationsSeen); err != nil {
 		return run, fmt.Errorf("complete sync run: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -173,6 +220,62 @@ last_error = NULL, updated_at = now() WHERE id = $1`, run.RuntimeConnectionID, f
 		return run, fmt.Errorf("commit runtime snapshot: %w", err)
 	}
 	return run, nil
+}
+
+func upsertAgentDelegation(ctx context.Context, tx *sql.Tx, run domain.RuntimeSyncRun, item domain.AgentDelegationSnapshot) error {
+	metadata, err := json.Marshal(item.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal agent delegation metadata: %w", err)
+	}
+	raw, err := json.Marshal(item.Raw)
+	if err != nil {
+		return fmt.Errorf("marshal raw agent delegation: %w", err)
+	}
+	delegateKey := "ref:" + item.DelegateRef
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO agent_delegations (runtime_connection_id,orchestrator_runtime_agent_id,delegate_key,
+delegate_runtime_agent_id,delegate_ref,tool_name,display_name,persona,configured,resolved,revision,status,
+observed_at,last_seen_sync_run_id,missing_successful_syncs,metadata_json,raw_runtime_json)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'active',$12,$13,0,$14::jsonb,$15::jsonb)
+ON CONFLICT (runtime_connection_id,orchestrator_runtime_agent_id,delegate_key) DO UPDATE SET
+delegate_runtime_agent_id=EXCLUDED.delegate_runtime_agent_id,delegate_ref=EXCLUDED.delegate_ref,
+tool_name=EXCLUDED.tool_name,display_name=EXCLUDED.display_name,persona=EXCLUDED.persona,
+configured=EXCLUDED.configured,resolved=EXCLUDED.resolved,revision=EXCLUDED.revision,status='active',
+observed_at=EXCLUDED.observed_at,last_seen_sync_run_id=EXCLUDED.last_seen_sync_run_id,
+missing_successful_syncs=0,metadata_json=EXCLUDED.metadata_json,raw_runtime_json=EXCLUDED.raw_runtime_json,
+updated_at=now()`, run.RuntimeConnectionID, item.OrchestratorRuntimeAgentID, delegateKey,
+		item.DelegateRuntimeAgentID, item.DelegateRef, item.ToolName, item.DisplayName, item.Persona,
+		item.Configured, item.Resolved, item.Revision, item.ObservedAt, run.ID, string(metadata), string(raw))
+	if err != nil {
+		return fmt.Errorf("upsert agent delegation: %w", err)
+	}
+	return nil
+}
+
+func upsertRuntimeExecution(ctx context.Context, tx *sql.Tx, runtimeID string, execution domain.RuntimeExecutionSnapshot) error {
+	metadata, err := json.Marshal(execution.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal runtime execution metadata: %w", err)
+	}
+	raw, err := json.Marshal(execution.Raw)
+	if err != nil {
+		return fmt.Errorf("marshal raw runtime execution: %w", err)
+	}
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO runtime_executions (runtime_connection_id,runtime_execution_id,parent_runtime_execution_id,
+runtime_agent_id,kind,status,started_at,ended_at,observed_at,metadata_json,raw_runtime_json)
+VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb)
+ON CONFLICT (runtime_connection_id,kind,runtime_execution_id) DO UPDATE SET
+parent_runtime_execution_id=EXCLUDED.parent_runtime_execution_id,runtime_agent_id=EXCLUDED.runtime_agent_id,
+status=EXCLUDED.status,started_at=COALESCE(runtime_executions.started_at,EXCLUDED.started_at),
+ended_at=EXCLUDED.ended_at,observed_at=EXCLUDED.observed_at,metadata_json=EXCLUDED.metadata_json,
+raw_runtime_json=EXCLUDED.raw_runtime_json,updated_at=now()`, runtimeID, execution.RuntimeExecutionID,
+		execution.ParentRuntimeExecutionID, execution.RuntimeAgentID, execution.Kind, execution.Status,
+		execution.StartedAt, execution.EndedAt, execution.ObservedAt, string(metadata), string(raw))
+	if err != nil {
+		return fmt.Errorf("upsert runtime execution: %w", err)
+	}
+	return nil
 }
 
 func upsertSubagentExecution(ctx context.Context, tx *sql.Tx, runtimeID string, execution domain.SubagentExecutionSnapshot) error {
@@ -310,7 +413,8 @@ func (r SyncRepository) ListRuns(ctx context.Context, runtimeID string, limit in
 		limit = 20
 	}
 	rows, err := r.db.QueryContext(ctx, `SELECT id, runtime_connection_id, trigger, status, started_at,
-finished_at, COALESCE(duration_ms,0), agents_seen, skills_seen, bindings_seen, access_documents_seen,
+finished_at, COALESCE(duration_ms,0), agents_seen, skills_seen, bindings_seen, access_documents_seen, executions_seen,
+diagnostics_seen, inventory_seen, capabilities_seen, delegations_seen,
 COALESCE(error_code,''), COALESCE(error_message,'') FROM runtime_sync_runs
 WHERE runtime_connection_id=$1 ORDER BY started_at DESC LIMIT $2`, runtimeID, limit)
 	if err != nil {
@@ -322,7 +426,8 @@ WHERE runtime_connection_id=$1 ORDER BY started_at DESC LIMIT $2`, runtimeID, li
 		var run domain.RuntimeSyncRun
 		var finished sql.NullTime
 		if err := rows.Scan(&run.ID, &run.RuntimeConnectionID, &run.Trigger, &run.Status, &run.StartedAt, &finished,
-			&run.DurationMS, &run.AgentsSeen, &run.SkillsSeen, &run.BindingsSeen, &run.AccessDocumentsSeen,
+			&run.DurationMS, &run.AgentsSeen, &run.SkillsSeen, &run.BindingsSeen, &run.AccessDocumentsSeen, &run.ExecutionsSeen,
+			&run.DiagnosticsSeen, &run.InventorySeen, &run.CapabilitiesSeen, &run.DelegationsSeen,
 			&run.ErrorCode, &run.ErrorMessage); err != nil {
 			return nil, fmt.Errorf("scan sync run: %w", err)
 		}
@@ -338,10 +443,12 @@ func (r SyncRepository) GetRun(ctx context.Context, runtimeID, runID string) (do
 	var run domain.RuntimeSyncRun
 	var finished sql.NullTime
 	err := r.db.QueryRowContext(ctx, `SELECT id,runtime_connection_id,trigger,status,started_at,finished_at,
-COALESCE(duration_ms,0),agents_seen,skills_seen,bindings_seen,access_documents_seen,
+COALESCE(duration_ms,0),agents_seen,skills_seen,bindings_seen,access_documents_seen,executions_seen,
+diagnostics_seen,inventory_seen,capabilities_seen,delegations_seen,
 COALESCE(error_code,''),COALESCE(error_message,'') FROM runtime_sync_runs WHERE runtime_connection_id=$1 AND id=$2`, runtimeID, runID).Scan(
 		&run.ID, &run.RuntimeConnectionID, &run.Trigger, &run.Status, &run.StartedAt, &finished, &run.DurationMS, &run.AgentsSeen,
-		&run.SkillsSeen, &run.BindingsSeen, &run.AccessDocumentsSeen, &run.ErrorCode, &run.ErrorMessage)
+		&run.SkillsSeen, &run.BindingsSeen, &run.AccessDocumentsSeen, &run.ExecutionsSeen,
+		&run.DiagnosticsSeen, &run.InventorySeen, &run.CapabilitiesSeen, &run.DelegationsSeen, &run.ErrorCode, &run.ErrorMessage)
 	if err != nil {
 		return run, err
 	}
@@ -429,6 +536,34 @@ JOIN runtime_skills s ON s.id=ab.runtime_skill_id WHERE ab.agent_id=$1 ORDER BY 
 	return detail, nil
 }
 
+func (r SyncRepository) ListAgentDelegations(ctx context.Context, runtimeID, runtimeAgentID string) ([]domain.PersistedAgentDelegation, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id,runtime_connection_id,orchestrator_runtime_agent_id,
+delegate_runtime_agent_id,delegate_ref,tool_name,display_name,persona,configured,resolved,revision,status,
+observed_at,metadata_json,raw_runtime_json FROM agent_delegations
+WHERE ($1='' OR runtime_connection_id=$1::uuid)
+AND ($2='' OR orchestrator_runtime_agent_id=$2 OR delegate_runtime_agent_id=$2)
+ORDER BY orchestrator_runtime_agent_id,display_name,delegate_ref`, runtimeID, runtimeAgentID)
+	if err != nil {
+		return nil, fmt.Errorf("list agent delegations: %w", err)
+	}
+	defer rows.Close()
+	var result []domain.PersistedAgentDelegation
+	for rows.Next() {
+		var item domain.PersistedAgentDelegation
+		var metadata, raw []byte
+		if err := rows.Scan(&item.ID, &item.RuntimeConnectionID, &item.OrchestratorRuntimeAgentID,
+			&item.DelegateRuntimeAgentID, &item.DelegateRef, &item.ToolName, &item.DisplayName,
+			&item.Persona, &item.Configured, &item.Resolved, &item.Revision, &item.Status,
+			&item.ObservedAt, &metadata, &raw); err != nil {
+			return nil, fmt.Errorf("scan agent delegation: %w", err)
+		}
+		_ = json.Unmarshal(metadata, &item.Metadata)
+		_ = json.Unmarshal(raw, &item.Raw)
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 func (r SyncRepository) ListSubagentExecutions(ctx context.Context, runtimeID, agentID string) ([]domain.PersistedSubagentExecution, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id,runtime_connection_id,runtime_execution_id,parent_run_id,
 runtime_agent_id,subagent_type,status,description,summary,started_at,ended_at,observed_at,metadata_json,raw_runtime_json
@@ -448,6 +583,42 @@ ORDER BY observed_at DESC LIMIT 200`, runtimeID, agentID)
 			&item.RuntimeAgentID, &item.SubagentType, &item.Status, &item.Description, &item.Summary, &started, &ended,
 			&item.ObservedAt, &metadata, &raw); err != nil {
 			return nil, fmt.Errorf("scan subagent execution: %w", err)
+		}
+		if started.Valid {
+			item.StartedAt = &started.Time
+		}
+		if ended.Valid {
+			item.EndedAt = &ended.Time
+		}
+		_ = json.Unmarshal(metadata, &item.Metadata)
+		_ = json.Unmarshal(raw, &item.Raw)
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (r SyncRepository) ListRuntimeExecutions(ctx context.Context, runtimeID, agentID, kind string, limit int) ([]domain.PersistedRuntimeExecution, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT id,runtime_connection_id,runtime_execution_id,
+COALESCE(parent_runtime_execution_id,''),runtime_agent_id,kind,status,started_at,ended_at,observed_at,
+metadata_json,raw_runtime_json FROM runtime_executions
+WHERE ($1='' OR runtime_connection_id=$1::uuid) AND ($2='' OR runtime_agent_id=$2)
+AND ($3='' OR kind=$3) ORDER BY observed_at DESC LIMIT $4`, runtimeID, agentID, kind, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list runtime executions: %w", err)
+	}
+	defer rows.Close()
+	var result []domain.PersistedRuntimeExecution
+	for rows.Next() {
+		var item domain.PersistedRuntimeExecution
+		var started, ended sql.NullTime
+		var metadata, raw []byte
+		if err := rows.Scan(&item.ID, &item.RuntimeConnectionID, &item.RuntimeExecutionID,
+			&item.ParentRuntimeExecutionID, &item.RuntimeAgentID, &item.Kind, &item.Status, &started,
+			&ended, &item.ObservedAt, &metadata, &raw); err != nil {
+			return nil, fmt.Errorf("scan runtime execution: %w", err)
 		}
 		if started.Valid {
 			item.StartedAt = &started.Time

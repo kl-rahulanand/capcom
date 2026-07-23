@@ -17,6 +17,12 @@ V1 does not require:
 - streaming
 - distributed worker fleet
 
+Post-V1 adds signed Gantry webhook ingestion as an acceleration path. A webhook
+is durably deduplicated and schedules a coalesced targeted adapter sync; it does
+not mutate Gantry directly or replace periodic full reconciliation. The detailed
+receiver, signature, replay-protection, and inbox design is defined in
+`16-adapter-roadmap-and-webhook-plan.md`.
+
 ## Sync Inputs
 
 Runtime connection:
@@ -43,6 +49,10 @@ Runtime connection:
 7. Optionally list recent runs/events.
 8. Mark runtime active and sync run succeeded.
 9. Run drift detection.
+
+The persisted sync run records `diagnostics_seen`, `inventory_seen`, and
+`capabilities_seen`. Inventory and capabilities are instance-scoped and retain
+the last successful observation when the runtime later becomes unavailable.
 
 ## Degraded Runtime Behavior
 
@@ -109,9 +119,9 @@ Expose:
 - last sync status
 - last sync duration
 - agents seen
+- delegation edges seen
 - events seen
 - last error
 - runtime status
 
 Dashboard Runtime Connections page should show these fields.
-

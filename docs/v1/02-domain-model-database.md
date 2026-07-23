@@ -24,6 +24,21 @@
 
 ## Tables
 
+### Runtime diagnostics and catalog
+
+Migration `007_runtime_inventory_and_diagnostics.sql` adds three
+instance-scoped last-known-state tables:
+
+| Table | Identity | Purpose |
+|---|---|---|
+| `runtime_diagnostics` | runtime connection + check id | Latest normalized doctor result and message |
+| `runtime_inventory_items` | runtime connection + kind + runtime item id | Onboarded tools, skills, and MCP servers |
+| `runtime_capabilities` | runtime connection + capability id + version | Approved immutable capability manifests |
+
+Frequently filtered identity, status, kind, category, risk, source, and
+observation fields use typed columns. Adapter-specific policy and raw payloads
+remain JSONB. A failed sync does not delete the last successful catalog.
+
 ### runtime_connections
 
 | Column | Type | Notes |
@@ -154,6 +169,30 @@ Unique key: `(runtime_connection_id, runtime_skill_id)`.
 status, observation time, sync provenance, and missing counters. Missing skills
 or bindings are marked stale after repeated complete successful snapshots; they
 are not hard-deleted.
+
+### agent_delegations
+
+| Column | Type | Notes |
+|---|---|---|
+| runtime_connection_id | uuid fk | Source runtime instance |
+| orchestrator_runtime_agent_id | text | Agent that can call the delegate |
+| delegate_key | text | Stable resolved runtime id or unresolved reference key |
+| delegate_runtime_agent_id | text | Resolved runtime agent id, when available |
+| delegate_ref | text | Runtime desired-state reference |
+| tool_name, display_name, persona | text | Normalized callable-agent presentation |
+| configured, resolved | boolean | Desired-state and runtime resolution signals |
+| revision | integer | Runtime desired-state revision |
+| status | text | `active` or `stale` |
+| observed_at | timestamptz | Last successful observation |
+| last_seen_sync_run_id | uuid fk null | Sync provenance |
+| missing_successful_syncs | integer | Consecutive successful absences |
+| metadata_json, raw_runtime_json | jsonb | Normalized metadata and source payload |
+
+Unique key: `(runtime_connection_id, orchestrator_runtime_agent_id,
+delegate_key)`. Delegations are directed many-to-many edges and must not be
+stored in `parent_runtime_agent_id`. `delegate_key` is derived from the
+adapter's canonical `delegate_ref`, which remains stable when a later snapshot
+enriches the edge with `delegate_runtime_agent_id`.
 
 Ephemeral subagent/delegation executions are not stored in this table or as
 durable agents. They are stored separately in `subagent_executions` when an

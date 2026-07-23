@@ -28,6 +28,7 @@ type RouterConfig struct {
 
 type ControlActionService interface {
 	ReconcileAccess(ctx context.Context, input services.ReconcileAccessInput) (domain.ControlAction, error)
+	SetAgentStatus(ctx context.Context, input services.SetAgentStatusInput) (domain.ControlAction, error)
 }
 
 type RuntimeSyncService interface {
@@ -37,6 +38,11 @@ type RuntimeSyncService interface {
 	ListAgents(ctx context.Context, runtimeID string) ([]domain.PersistedAgent, error)
 	GetAgent(ctx context.Context, agentID string) (domain.PersistedAgentDetail, error)
 	ListSubagentExecutions(ctx context.Context, runtimeID, agentID string) ([]domain.PersistedSubagentExecution, error)
+	ListRuntimeExecutions(ctx context.Context, runtimeID, agentID, kind string, limit int) ([]domain.PersistedRuntimeExecution, error)
+	ListRuntimeDiagnostics(ctx context.Context, runtimeID string) ([]domain.PersistedRuntimeDiagnostic, error)
+	ListRuntimeInventory(ctx context.Context, runtimeID, kind string) ([]domain.PersistedRuntimeInventory, error)
+	ListRuntimeCapabilities(ctx context.Context, runtimeID string) ([]domain.PersistedRuntimeCapability, error)
+	ListAgentDelegations(ctx context.Context, runtimeID, agentID string) ([]domain.PersistedAgentDelegation, error)
 }
 
 type RuntimeConnectionService interface {
@@ -88,7 +94,9 @@ func NewRouter(cfg RouterConfig, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /v1/agents/{id}", handleGetPersistedAgent(cfg))
 	mux.HandleFunc("GET /v1/agents/{id}/skills", handleGetPersistedAgentSkills(cfg))
 	mux.HandleFunc("GET /v1/agents/{id}/access", handleGetPersistedAgentAccess(cfg))
+	mux.HandleFunc("GET /v1/agents/{id}/delegations", handleListAgentDelegations(cfg))
 	mux.HandleFunc("GET /v1/subagent-executions", handleListSubagentExecutions(cfg))
+	mux.HandleFunc("GET /v1/runtime-executions", handleListRuntimeExecutions(cfg))
 	// Runtime instances are the user-facing connection boundary. The older
 	// runtime-connections routes remain available for compatibility.
 	mux.HandleFunc("POST /v1/runtime-instances", handleCreateRuntimeConnection(cfg))
@@ -100,10 +108,16 @@ func NewRouter(cfg RouterConfig, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /v1/runtime-instances/{id}/sync-runs", handleListSyncRuns(cfg))
 	mux.HandleFunc("GET /v1/runtime-instances/{id}/agents", handleListInstanceAgents(cfg))
 	mux.HandleFunc("GET /v1/runtime-instances/{id}/subagent-executions", handleListInstanceSubagentExecutions(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}/executions", handleListInstanceRuntimeExecutions(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}/diagnostics", handleListRuntimeDiagnostics(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}/inventory", handleListRuntimeInventory(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}/capabilities", handleListRuntimeCapabilities(cfg))
+	mux.HandleFunc("GET /v1/runtime-instances/{id}/agent-delegations", handleListInstanceAgentDelegations(cfg))
 	mux.HandleFunc("GET /v1/runtime-instances/{id}/live/agents", handleListRuntimeAgents(cfg))
 	mux.HandleFunc("GET /v1/runtime-instances/{id}/live/agents/{agentID}/skills", handleListRuntimeAgentSkills(cfg))
 	mux.HandleFunc("GET /v1/runtime-instances/{id}/live/agents/{agentID}/access", handleGetRuntimeAgentAccess(cfg))
 	mux.HandleFunc("POST /v1/agents/{id}/actions/reconcile-access", handleReconcileAgentAccess(cfg))
+	mux.HandleFunc("POST /v1/agents/{id}/actions/set-status", handleSetAgentStatus(cfg))
 	mux.HandleFunc("/", handleNotFound)
 
 	return requestLogger(corsMiddleware(adminAuth(mux, cfg.AdminToken), cfg.AllowedOrigins), logger)

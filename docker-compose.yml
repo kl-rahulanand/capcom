@@ -1,5 +1,5 @@
 # Local Capcom stack: Postgres + migrations + Go API + Next.js console.
-# Dev-only credentials — do not use these values outside local development.
+# Dev-only credentials - do not use these values outside local development.
 #
 #   docker compose up --build
 #   open http://localhost:3000
@@ -36,6 +36,10 @@ services:
 
   api:
     build: .
+    extra_hosts:
+      # Local runtime instances run on the Windows host with distinct ports.
+      - "gantry.internal:host-gateway"
+      - "langgraph.internal:host-gateway"
     environment:
       CAPCOM_HTTP_ADDR: ":8080"
       CAPCOM_DATABASE_URL: postgres://capcom:capcom@postgres:5432/capcom?sslmode=disable

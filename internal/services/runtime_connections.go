@@ -252,13 +252,18 @@ func validateCreateRuntimeConnection(input CreateRuntimeConnectionInput) error {
 	if strings.TrimSpace(input.Name) == "" {
 		return fmt.Errorf("name is required")
 	}
-	if input.Kind != domain.RuntimeKindGantry {
-		return fmt.Errorf("runtime_type must be %q", domain.RuntimeKindGantry)
+	switch input.Kind {
+	case domain.RuntimeKindGantry, domain.RuntimeKindLangGraph:
+	default:
+		return fmt.Errorf("runtime_type must be one of %q, %q", domain.RuntimeKindGantry, domain.RuntimeKindLangGraph)
 	}
 	switch input.Mode {
 	case domain.RuntimeModeReadOnly, domain.RuntimeModeControlEnabled:
 	default:
 		return fmt.Errorf("mode must be one of %q, %q", domain.RuntimeModeReadOnly, domain.RuntimeModeControlEnabled)
+	}
+	if input.Kind == domain.RuntimeKindLangGraph && input.Mode != domain.RuntimeModeReadOnly {
+		return fmt.Errorf("langgraph runtime connections support read_only mode in this release")
 	}
 	if strings.TrimSpace(input.Endpoint) == "" {
 		return fmt.Errorf("endpoint is required")

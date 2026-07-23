@@ -18,10 +18,14 @@ func TestClientImplementsRuntimeAdapter(t *testing.T) {
 
 func TestCheck(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/health" {
-			t.Fatalf("path = %q, want /v1/health", r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/health":
+			writeTestJSON(t, w, map[string]any{"status": "ok"})
+		case "/v1/doctor":
+			writeTestJSON(t, w, map[string]any{"status": "ok", "checks": []map[string]any{{"id": "storage", "status": "ok", "message": "ready"}}})
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
-		writeTestJSON(t, w, map[string]any{"status": "ok"})
 	}))
 	defer server.Close()
 
@@ -39,8 +43,17 @@ func TestCheck(t *testing.T) {
 	if !got.Capabilities.ReadAgents || !got.Capabilities.ReadAgentAccess {
 		t.Fatalf("read capabilities were not set: %#v", got.Capabilities)
 	}
+	if !got.Capabilities.ReadAgentDelegates {
+		t.Fatal("Gantry should advertise durable delegate relationships")
+	}
 	if got.Capabilities.ReplaceAgentAccess {
 		t.Fatal("read-only connection should not support replace access")
+	}
+	if !got.Capabilities.ReadDiagnostics || !got.Capabilities.ReadInventory || !got.Capabilities.ReadCapabilityCatalog {
+		t.Fatalf("catalog capabilities were not set: %#v", got.Capabilities)
+	}
+	if len(got.Diagnostics) != 1 || got.Diagnostics[0].CheckID != "storage" {
+		t.Fatalf("diagnostics = %#v", got.Diagnostics)
 	}
 }
 
@@ -89,6 +102,42 @@ func TestListAgentsAcceptsEnvelope(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].RuntimeAgentID != "agent:main" {
 		t.Fatalf("agents = %#v", got)
+	}
+}
+
+func TestListAgentDelegates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/agents/agent:main/delegates" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		writeTestJSON(t, w, map[string]any{
+			"agentId": "agent:main", "revision": 12,
+			"delegates": []string{"reviewer", "missing"},
+			"resolved": []map[string]any{
+				{"ref": "reviewer", "agentId": "agent:reviewer", "toolName": "delegate_reviewer", "displayName": "Reviewer", "persona": "developer"},
+				{"ref": "agent:incident", "agentId": "agent:incident", "toolName": "delegate_incident", "displayName": "Incident", "persona": "operations"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	got, err := NewClient(server.Client(), staticCredentialResolver{"gantry-key": "test-token"}).ListAgentDelegates(
+		context.Background(), domain.RuntimeConnection{BaseURL: server.URL, AuthRef: "gantry-key"}, "agent:main",
+	)
+	if err != nil {
+		t.Fatalf("ListAgentDelegates returned error: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("delegations = %#v", got)
+	}
+	if !got[0].Configured || !got[0].Resolved || got[0].DelegateRuntimeAgentID != "agent:reviewer" {
+		t.Fatalf("configured delegation = %#v", got[0])
+	}
+	if got[1].Configured || !got[1].Resolved {
+		t.Fatalf("conversation-bound delegation = %#v", got[1])
+	}
+	if !got[2].Configured || got[2].Resolved || got[2].DelegateRef != "missing" || got[2].DelegateRuntimeAgentID != "agent:missing" {
+		t.Fatalf("unresolved delegation = %#v", got[2])
 	}
 }
 
@@ -157,6 +206,18 @@ func TestCollectSnapshotReturnsCompleteNormalizedState(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/health":
 			writeTestJSON(t, w, map[string]any{"status": "ok"})
+		case "/v1/doctor":
+			writeTestJSON(t, w, map[string]any{"status": "ok", "checks": []map[string]any{{"id": "storage", "status": "ok"}}})
+		case "/v1/inventory":
+			writeTestJSON(t, w, map[string]any{"inventory": map[string]any{
+				"tools":      []map[string]any{{"id": "tool:browser", "displayName": "Browser", "status": "active"}},
+				"skills":     []map[string]any{{"id": "skill:research", "name": "Research Brief", "status": "installed"}},
+				"mcpServers": []map[string]any{{"id": "mcp:github", "displayName": "GitHub", "status": "active"}},
+			}})
+		case "/v1/capabilities":
+			writeTestJSON(t, w, map[string]any{"capabilities": []map[string]any{{
+				"id": "browser.use", "version": "builtin", "displayName": "Browser", "category": "Browser", "risk": "write",
+			}}})
 		case "/v1/agents":
 			writeTestJSON(t, w, []map[string]any{{"id": "agent:main_agent", "name": "gantry", "status": "active"}})
 		case "/v1/agents/agent:main_agent/skills":
@@ -165,6 +226,8 @@ func TestCollectSnapshotReturnsCompleteNormalizedState(t *testing.T) {
 			writeTestJSON(t, w, map[string]any{"skills": []map[string]any{{"id": "skill:research", "name": "Research Brief"}}})
 		case "/v1/agents/agent:main_agent/access":
 			writeTestJSON(t, w, map[string]any{"agentId": "agent:main_agent", "selections": []map[string]any{{"id": "browser.use"}}})
+		case "/v1/agents/agent:main_agent/delegates":
+			writeTestJSON(t, w, map[string]any{"agentId": "agent:main_agent", "revision": 3, "delegates": []string{"reviewer"}, "resolved": []map[string]any{{"ref": "reviewer", "agentId": "agent:reviewer", "toolName": "delegate_reviewer", "displayName": "Reviewer", "persona": "developer"}}})
 		case "/v1/runs":
 			writeTestJSON(t, w, map[string]any{"runs": []any{}})
 		case "/v1/jobs":
@@ -190,6 +253,39 @@ func TestCollectSnapshotReturnsCompleteNormalizedState(t *testing.T) {
 	if len(got.Agents[0].Access.Selections) != 1 {
 		t.Fatalf("access = %#v", got.Agents[0].Access)
 	}
+	if len(got.Diagnostics) != 1 || len(got.Inventory) != 3 || len(got.CapabilityCatalog) != 1 {
+		t.Fatalf("runtime catalog snapshot = diagnostics:%d inventory:%d capabilities:%d", len(got.Diagnostics), len(got.Inventory), len(got.CapabilityCatalog))
+	}
+	if len(got.AgentDelegations) != 1 || got.AgentDelegations[0].DelegateRuntimeAgentID != "agent:reviewer" {
+		t.Fatalf("delegations = %#v", got.AgentDelegations)
+	}
+}
+
+func TestSetAgentStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/v1/agents/agent:main_agent" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["status"] != "disabled" {
+			t.Fatalf("body = %#v", body)
+		}
+		writeTestJSON(t, w, map[string]any{"id": "agent:main_agent", "name": "Main", "status": "disabled"})
+	}))
+	defer server.Close()
+	got, err := NewClient(server.Client(), staticCredentialResolver{"gantry-key": "test-token"}).SetAgentStatus(
+		context.Background(), domain.RuntimeConnection{BaseURL: server.URL, AuthRef: "gantry-key", Mode: domain.RuntimeModeControlEnabled},
+		"agent:main_agent", domain.AgentStatusDisabled,
+	)
+	if err != nil {
+		t.Fatalf("SetAgentStatus returned error: %v", err)
+	}
+	if got.Status != domain.AgentStatusDisabled {
+		t.Fatalf("status = %q", got.Status)
+	}
 }
 
 func TestNormalizeDelegatedExecutions(t *testing.T) {
@@ -211,6 +307,10 @@ func TestClientSendsBearerCredential(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Fatalf("Authorization = %q", got)
+		}
+		if r.URL.Path == "/v1/doctor" {
+			writeTestJSON(t, w, map[string]any{"status": "ok", "checks": []any{}})
+			return
 		}
 		writeTestJSON(t, w, map[string]any{"status": "ok"})
 	}))

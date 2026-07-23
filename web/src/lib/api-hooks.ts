@@ -9,6 +9,7 @@ import {
 
 import { capcomApi } from "@/lib/api-client"
 import type {
+  AgentDelegation,
   CreateRuntimeInstanceRequest,
   CreateSecretRequest,
   HealthResponse,
@@ -16,9 +17,14 @@ import type {
   RuntimeAgentAccess,
   RuntimeAgentSkill,
   RuntimeConnectionTestResult,
+  RuntimeCapability,
+  RuntimeDiagnostic,
+  RuntimeExecution,
+  RuntimeInventoryItem,
   RuntimeInstance,
   RuntimeSyncRun,
   ReconcileAccessRequest,
+  SetAgentStatusRequest,
   SubagentExecution,
   SyncRuntimeRequest,
   ControlAction,
@@ -34,6 +40,16 @@ export const queryKeys = {
     ["runtime-instances", id, "sync-runs"] as const,
   runtimeInstanceAgents: (id: string) =>
     ["runtime-instances", id, "agents"] as const,
+  runtimeInstanceExecutions: (id: string) =>
+    ["runtime-instances", id, "executions"] as const,
+  runtimeInstanceDiagnostics: (id: string) =>
+    ["runtime-instances", id, "diagnostics"] as const,
+  runtimeInstanceInventory: (id: string) =>
+    ["runtime-instances", id, "inventory"] as const,
+  runtimeInstanceCapabilities: (id: string) =>
+    ["runtime-instances", id, "capabilities"] as const,
+  runtimeInstanceAgentDelegations: (id: string) =>
+    ["runtime-instances", id, "agent-delegations"] as const,
   runtimeInstanceSubagentExecutions: (id: string, agentId?: string) =>
     ["runtime-instances", id, "subagent-executions", agentId ?? "all"] as const,
   persistedAgents: (runtimeConnectionId?: string) =>
@@ -41,6 +57,7 @@ export const queryKeys = {
   persistedAgent: (id: string) => ["agents", id] as const,
   agentSkills: (id: string) => ["agents", id, "skills"] as const,
   agentAccess: (id: string) => ["agents", id, "access"] as const,
+  agentDelegations: (id: string) => ["agents", id, "delegations"] as const,
   subagentExecutions: (runtimeConnectionId?: string, agentId?: string) =>
     [
       "subagent-executions",
@@ -98,6 +115,38 @@ export function useRuntimeInstanceAgentsQuery(id: string | undefined) {
   })
 }
 
+export function useRuntimeInstanceExecutionsQuery(id: string | undefined) {
+  return useQuery<RuntimeExecution[]>({
+    queryKey: queryKeys.runtimeInstanceExecutions(id ?? ""),
+    queryFn: () => capcomApi.listRuntimeInstanceExecutions(id ?? ""),
+    enabled: Boolean(id),
+  })
+}
+
+export function useRuntimeInstanceDiagnosticsQuery(id: string | undefined) {
+  return useQuery<RuntimeDiagnostic[]>({
+    queryKey: queryKeys.runtimeInstanceDiagnostics(id ?? ""),
+    queryFn: () => capcomApi.listRuntimeInstanceDiagnostics(id ?? ""),
+    enabled: Boolean(id),
+  })
+}
+
+export function useRuntimeInstanceInventoryQuery(id: string | undefined) {
+  return useQuery<RuntimeInventoryItem[]>({
+    queryKey: queryKeys.runtimeInstanceInventory(id ?? ""),
+    queryFn: () => capcomApi.listRuntimeInstanceInventory(id ?? ""),
+    enabled: Boolean(id),
+  })
+}
+
+export function useRuntimeInstanceCapabilitiesQuery(id: string | undefined) {
+  return useQuery<RuntimeCapability[]>({
+    queryKey: queryKeys.runtimeInstanceCapabilities(id ?? ""),
+    queryFn: () => capcomApi.listRuntimeInstanceCapabilities(id ?? ""),
+    enabled: Boolean(id),
+  })
+}
+
 export function usePersistedAgentQuery(id: string | undefined) {
   return useQuery<PersistedAgent>({
     queryKey: queryKeys.persistedAgent(id ?? ""),
@@ -122,6 +171,14 @@ export function useAgentAccessQuery(id: string | undefined) {
   })
 }
 
+export function useAgentDelegationsQuery(id: string | undefined) {
+  return useQuery<AgentDelegation[]>({
+    queryKey: queryKeys.agentDelegations(id ?? ""),
+    queryFn: () => capcomApi.listAgentDelegations(id ?? ""),
+    enabled: Boolean(id),
+  })
+}
+
 export function useReconcileAgentAccessMutation(id: string) {
   const queryClient = useQueryClient()
   return useMutation<ControlAction, Error, ReconcileAccessRequest>({
@@ -135,6 +192,22 @@ export function useReconcileAgentAccessMutation(id: string) {
           queryKey: queryKeys.runtimeInstanceAgents(
             action.runtime_connection_id
           ),
+        }),
+      ])
+    },
+  })
+}
+
+export function useSetAgentStatusMutation(id: string) {
+  const queryClient = useQueryClient()
+  return useMutation<ControlAction, Error, SetAgentStatusRequest>({
+    mutationFn: (body) => capcomApi.setAgentStatus(id, body),
+    onSuccess: async (action) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.persistedAgent(id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.persistedAgents() }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.runtimeInstanceAgents(action.runtime_connection_id),
         }),
       ])
     },
@@ -185,6 +258,21 @@ export function useSyncRuntimeInstanceMutation(id: string) {
         }),
         queryClient.invalidateQueries({
           queryKey: queryKeys.runtimeInstanceAgents(id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.runtimeInstanceExecutions(id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.runtimeInstanceDiagnostics(id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.runtimeInstanceInventory(id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.runtimeInstanceCapabilities(id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.runtimeInstanceAgentDelegations(id),
         }),
         queryClient.invalidateQueries({ queryKey: queryKeys.persistedAgents() }),
         queryClient.invalidateQueries({

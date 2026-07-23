@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"capcom/internal/adapters/gantry"
+	"capcom/internal/adapters/langgraph"
 	"capcom/internal/api"
 	"capcom/internal/config"
 	secretcipher "capcom/internal/secrets"
@@ -75,12 +76,13 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		secretService := services.NewSecretService(store.NewSecretRepository(db), auditRepository, cipher)
 		runtimeRepository := store.NewRuntimeConnectionRepository(db)
 		gantryAdapter := gantry.NewClient(nil, secretService)
+		langGraphAdapter := langgraph.NewClient(nil, secretService)
 		runtimeService := services.NewRuntimeConnectionService(runtimeRepository, auditRepository).
-			WithCredentialResolver(secretService).WithAdapter(gantryAdapter)
+			WithCredentialResolver(secretService).WithAdapter(gantryAdapter).WithAdapter(langGraphAdapter)
 		syncService := services.NewRuntimeSyncService(runtimeRepository, store.NewSyncRepository(db), auditRepository, cfg.Sync.MissingThreshold).
-			WithAdapter(gantryAdapter)
+			WithAdapter(gantryAdapter).WithAdapter(langGraphAdapter)
 		controlService := services.NewControlActionService(runtimeRepository, store.NewSyncRepository(db), store.NewControlActionRepository(db), auditRepository, syncService).
-			WithAdapter(gantryAdapter)
+			WithAdapter(gantryAdapter).WithAdapter(langGraphAdapter)
 		routerConfig.Secrets = secretService
 		routerConfig.RuntimeConnections = runtimeService
 		routerConfig.RuntimeSync = syncService

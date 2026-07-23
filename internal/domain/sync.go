@@ -28,6 +28,11 @@ const (
 type RuntimeSnapshot struct {
 	ObservedAt         time.Time
 	Agents             []SnapshotAgent
+	Diagnostics        []RuntimeDiagnosticSnapshot
+	Inventory          []RuntimeInventorySnapshot
+	CapabilityCatalog  []RuntimeCapabilitySnapshot
+	AgentDelegations   []AgentDelegationSnapshot
+	Executions         []RuntimeExecutionSnapshot
 	SubagentExecutions []SubagentExecutionSnapshot
 	Metadata           map[string]any
 	Capabilities       map[string]bool
@@ -51,9 +56,58 @@ type RuntimeSyncRun struct {
 	SkillsSeen          int
 	BindingsSeen        int
 	AccessDocumentsSeen int
+	ExecutionsSeen      int
+	DiagnosticsSeen     int
+	InventorySeen       int
+	CapabilitiesSeen    int
+	DelegationsSeen     int
 	ErrorCode           string
 	ErrorMessage        string
 	Metadata            map[string]any
+}
+
+// AgentDelegationSnapshot is a durable directed relationship advertised by a
+// runtime. It is separate from parent-child hierarchy because one delegate may
+// be callable by multiple orchestrators.
+type AgentDelegationSnapshot struct {
+	OrchestratorRuntimeAgentID string
+	DelegateRuntimeAgentID     string
+	DelegateRef                string
+	ToolName                   string
+	DisplayName                string
+	Persona                    string
+	Configured                 bool
+	Resolved                   bool
+	Revision                   int
+	Status                     string
+	ObservedAt                 time.Time
+	Metadata                   map[string]any
+	Raw                        map[string]any
+}
+
+type PersistedAgentDelegation struct {
+	ID                  string
+	RuntimeConnectionID string
+	AgentDelegationSnapshot
+}
+
+type RuntimeExecutionSnapshot struct {
+	RuntimeExecutionID       string
+	ParentRuntimeExecutionID string
+	RuntimeAgentID           string
+	Kind                     string
+	Status                   string
+	StartedAt                *time.Time
+	EndedAt                  *time.Time
+	ObservedAt               time.Time
+	Metadata                 map[string]any
+	Raw                      map[string]any
+}
+
+type PersistedRuntimeExecution struct {
+	ID                  string
+	RuntimeConnectionID string
+	RuntimeExecutionSnapshot
 }
 
 type PersistedAgent struct {

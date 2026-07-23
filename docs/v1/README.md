@@ -36,6 +36,8 @@ The product is not an observability dashboard or a new agent runtime. Gantry run
 | 13 | `13-execution-implementation-plan.md` | Execution sequence, task breakdown, and acceptance gates |
 | 14 | `14-durable-runtime-sync-and-access-control-plan.md` | Detailed plan for durable sync, stale-state handling, worker scheduling, and audited access control |
 | 15 | `15-multi-runtime-instances.md` | Multi-instance identity, isolation, API hierarchy, and console contract |
+| 16 | `16-adapter-roadmap-and-webhook-plan.md` | Gantry completion matrix, signed webhook plan, adapter priorities, and enterprise deployment patterns |
+| 17 | `17-langgraph-agent-server-adapter.md` | Implemented LangGraph read-only contract, normalization, local fixture, and live verification runbook |
 
 ## V1 Decisions
 
@@ -45,10 +47,12 @@ The product is not an observability dashboard or a new agent runtime. Gantry run
 - CLI: Go CLI in the same repo/module.
 - First runtime adapter: Gantry.
 - Event mode: polling/control API first.
-- Webhooks: Phase 2.
+- Webhooks: Phase 2, using a signed durable inbox plus targeted sync while polling remains authoritative.
 - Enforcement mode: Phase 2.
 - Kubernetes operator: Phase 2.
-- OpenTelemetry/LangSmith/Langfuse/Phoenix adapters: after Gantry V1 loop works.
+- Second runtime adapter: LangGraph Agent Server read-only inventory and execution sync, implemented and live-tested on 2026-07-21.
+- Cloud runtime adapters: AgentCore, Foundry Agent Service, then Vertex AI Agent Engine, adjusted by customer cloud demand.
+- OpenTelemetry and observability platforms are telemetry connectors, not authoritative runtime adapters.
 
 ## Definition Of V1 Done
 

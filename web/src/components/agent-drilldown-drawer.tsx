@@ -26,12 +26,16 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import {
   useAgentAccessQuery,
+  useAgentDelegationsQuery,
   useAgentSkillsQuery,
   usePersistedAgentQuery,
   useReconcileAgentAccessMutation,
+  useSetAgentStatusMutation,
   useRuntimeInstancesQuery,
+  useRuntimeInstanceAgentsQuery,
 } from "@/lib/api-hooks"
 import type {
+  AgentDelegation,
   ControlAction,
   JsonObject,
   PersistedAgent,
@@ -56,14 +60,18 @@ export function AgentDrilldownDrawer({
   const agentQuery = usePersistedAgentQuery(open ? agentId : undefined)
   const skillsQuery = useAgentSkillsQuery(open ? agentId : undefined)
   const accessQuery = useAgentAccessQuery(open ? agentId : undefined)
+  const delegationsQuery = useAgentDelegationsQuery(open ? agentId : undefined)
   const runtimeInstancesQuery = useRuntimeInstancesQuery(open)
   const detail = agentQuery.data ?? agent
   const instance = runtimeInstancesQuery.data?.find(
     (item) => item.id === detail?.runtime_connection_id
   )
+  const instanceAgentsQuery = useRuntimeInstanceAgentsQuery(
+    open ? detail?.runtime_connection_id : undefined
+  )
   const skills = skillsQuery.data ?? []
   const selections = accessQuery.data?.selections ?? []
-  const canReconcile = instance?.mode === "control_enabled"
+  const canControl = instance?.mode === "control_enabled"
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -109,6 +117,12 @@ export function AgentDrilldownDrawer({
                       : "Unknown runtime"
                   }
                 />
+                <DelegationsSection
+                  agent={detail}
+                  agents={instanceAgentsQuery.data ?? []}
+                  delegations={delegationsQuery.data ?? []}
+                  loading={delegationsQuery.isLoading || instanceAgentsQuery.isLoading}
+                />
                 <SkillsSection
                   loading={skillsQuery.isLoading}
                   skills={skills}
@@ -122,13 +136,16 @@ export function AgentDrilldownDrawer({
           </div>
         </ScrollArea>
 
-        {detail && canReconcile ? (
-          <div className="border-t border-[var(--sl)] px-6 py-4">
-            <ReconcileAccessEditor
-              agent={detail}
-              selections={selections}
-              pendingAccess={accessQuery.isLoading}
-            />
+        {detail && instance?.runtime_type === "gantry" ? (
+          <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--sl)] px-6 py-4">
+            <AgentStatusEditor agent={detail} enabled={canControl} />
+            {canControl ? (
+              <ReconcileAccessEditor
+                agent={detail}
+                selections={selections}
+                pendingAccess={accessQuery.isLoading}
+              />
+            ) : null}
           </div>
         ) : null}
       </SheetContent>
@@ -168,7 +185,12 @@ function AgentOverview({
   const metadata = agent.metadata ?? {}
   const configuration =
     pickMetadata(metadata, ["configuration", "config", "settings"]) ?? "none"
-  const harness = pickMetadata(metadata, ["harness", "harness_id", "harness_name"])
+  const harness = pickMetadata(metadata, [
+    "agent_harness",
+    "harness",
+    "harness_id",
+    "harness_name",
+  ])
 
   return (
     <DrawerSection title="Agent overview">
@@ -194,6 +216,114 @@ function AgentOverview({
         />
       </div>
     </DrawerSection>
+  )
+}
+
+function DelegationsSection({
+  agent,
+  agents,
+  delegations,
+  loading,
+}: {
+  agent: PersistedAgent
+  agents: PersistedAgent[]
+  delegations: AgentDelegation[]
+  loading: boolean
+}) {
+  const names = new Map(agents.map((item) => [item.runtime_agent_id, item.name]))
+  const outgoing = delegations.filter(
+    (item) => item.orchestrator_runtime_agent_id === agent.runtime_agent_id
+  )
+  const incoming = delegations.filter(
+    (item) => item.delegate_runtime_agent_id === agent.runtime_agent_id
+  )
+
+  return (
+    <DrawerSection title="Agent relationships">
+      {loading ? (
+        <StackSkeleton />
+      ) : outgoing.length || incoming.length ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <DelegationList
+            empty="No callable delegates."
+            items={outgoing}
+            label="Delegates"
+            nameFor={(item) =>
+              item.display_name ||
+              names.get(item.delegate_runtime_agent_id || "") ||
+              item.delegate_ref
+            }
+            runtimeIDFor={(item) => item.delegate_runtime_agent_id || item.delegate_ref}
+          />
+          <DelegationList
+            empty="Not delegated by another agent."
+            items={incoming}
+            label="Delegated by"
+            nameFor={(item) =>
+              names.get(item.orchestrator_runtime_agent_id) ||
+              item.orchestrator_runtime_agent_id
+            }
+            runtimeIDFor={(item) => item.orchestrator_runtime_agent_id}
+          />
+        </div>
+      ) : (
+        <EmptyPanel>No durable delegation relationships imported.</EmptyPanel>
+      )}
+    </DrawerSection>
+  )
+}
+
+function DelegationList({
+  label,
+  items,
+  empty,
+  nameFor,
+  runtimeIDFor,
+}: {
+  label: string
+  items: AgentDelegation[]
+  empty: string
+  nameFor: (item: AgentDelegation) => string
+  runtimeIDFor: (item: AgentDelegation) => string
+}) {
+  return (
+    <div>
+      <div className="capcom-eyebrow mb-2">{label}</div>
+      {items.length ? (
+        <div className="flex flex-col gap-2">
+          {items.map((item) => (
+            <div
+              key={item.id}
+              className="border border-[var(--sl)] bg-[var(--sf)] px-3 py-2"
+            >
+              <div className="font-hud text-[13px] text-[var(--tx)]">
+                {nameFor(item)}
+              </div>
+              <div className="mt-1 break-all font-hud text-[10px] text-[var(--fa)]">
+                {runtimeIDFor(item)}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <SkillBadge>
+                  {item.configured ? "configured" : "conversation-bound"}
+                </SkillBadge>
+                <SkillBadge>{item.resolved ? "resolved" : "unresolved"}</SkillBadge>
+                {item.persona ? <SkillBadge>{item.persona}</SkillBadge> : null}
+                {item.status === "stale" ? <SkillBadge>stale</SkillBadge> : null}
+              </div>
+              {item.tool_name ? (
+                <div className="mt-2 font-hud text-[10px] text-[var(--mu)]">
+                  {item.tool_name}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="border border-dashed border-[var(--sl)] px-3 py-4 text-[11px] text-[var(--fa)]">
+          {empty}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -392,6 +522,92 @@ function ReconcileAccessEditor({
               })
             }}
           />
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+function AgentStatusEditor({
+  agent,
+  enabled,
+}: {
+  agent: PersistedAgent
+  enabled: boolean
+}) {
+  const [open, setOpen] = React.useState(false)
+  const mutation = useSetAgentStatusMutation(agent.id)
+  const targetStatus = agent.status === "disabled" ? "enabled" : "disabled"
+  const command = targetStatus === "enabled" ? "Enable" : "Disable"
+
+  return (
+    <>
+      <Button
+        variant={targetStatus === "disabled" ? "outline" : "default"}
+        disabled={!enabled}
+        title={enabled ? `${command} agent` : "Runtime instance is read-only"}
+        className={cn(
+          "font-hud text-xs",
+          targetStatus === "disabled" && "hover:border-[var(--dg)] hover:text-[var(--dg)]"
+        )}
+        onClick={() => setOpen(true)}
+      >
+        {command} agent
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="border border-[var(--hl)] bg-[var(--el)] shadow-[var(--shdw)] sm:max-w-[480px]">
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const formData = new FormData(event.currentTarget)
+              const actor = String(formData.get("actor") ?? "").trim()
+              const reason = String(formData.get("reason") ?? "").trim()
+              if (!actor || !reason) return
+              const dryRun = formData.get("dry_run") === "on"
+              mutation.mutate(
+                {
+                  status: targetStatus,
+                  actor,
+                  reason,
+                  idempotency_key: randomIdempotencyKey(),
+                  dry_run: dryRun,
+                },
+                {
+                  onSuccess: (action) => {
+                    toast.success(`${command} agent ${actionStatus(action)}${dryRun ? " (validation only)" : ""}`)
+                    setOpen(false)
+                  },
+                  onError: (error) => toast.error(error.message),
+                }
+              )
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>{command} {agent.name}</DialogTitle>
+              <DialogDescription>
+                {targetStatus === "disabled"
+                  ? "Stops this agent from accepting new Gantry work."
+                  : "Returns this Gantry agent to active service."}
+              </DialogDescription>
+            </DialogHeader>
+            <label className="flex flex-col gap-2">
+              <span className="capcom-eyebrow">Actor</span>
+              <Input name="actor" defaultValue="local-operator" required className="font-hud text-[13px]" />
+            </label>
+            <label className="flex flex-col gap-2">
+              <span className="capcom-eyebrow">Reason</span>
+              <Textarea name="reason" defaultValue={`${command} ${agent.name}`} required rows={3} className="resize-none font-hud text-[13px]" />
+            </label>
+            <label className="flex items-center gap-2 font-hud text-[12px] text-[var(--mu)]">
+              <input name="dry_run" type="checkbox" defaultChecked className="accent-[var(--ac)]" />
+              Validate only
+            </label>
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={mutation.isPending} onClick={() => setOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? "Submitting" : command}</Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </>
