@@ -21,6 +21,37 @@ type gantryAgent struct {
 	Raw         map[string]any `json:"-"`
 }
 
+type gantryAgentDelegates struct {
+	AgentID   string                   `json:"agentId"`
+	Revision  int                      `json:"revision"`
+	Delegates []string                 `json:"delegates"`
+	Resolved  []gantryResolvedDelegate `json:"resolved"`
+}
+
+type gantryResolvedDelegate struct {
+	Ref         string         `json:"ref"`
+	AgentID     string         `json:"agentId"`
+	ToolName    string         `json:"toolName"`
+	DisplayName string         `json:"displayName"`
+	Persona     string         `json:"persona"`
+	Raw         map[string]any `json:"-"`
+}
+
+func (g *gantryResolvedDelegate) UnmarshalJSON(data []byte) error {
+	type alias gantryResolvedDelegate
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*g = gantryResolvedDelegate(decoded)
+	g.Raw = raw
+	return nil
+}
+
 func (g *gantryAgent) UnmarshalJSON(data []byte) error {
 	type alias gantryAgent
 	var decoded alias
@@ -81,6 +112,72 @@ func (g *gantryAccess) UnmarshalJSON(data []byte) error {
 type gantrySelection struct {
 	ID      string `json:"id"`
 	Version string `json:"version"`
+}
+
+type gantryDoctor struct {
+	Status string              `json:"status"`
+	Checks []gantryDoctorCheck `json:"checks"`
+}
+
+type gantryDoctorCheck struct {
+	ID      string         `json:"id"`
+	Status  string         `json:"status"`
+	Message string         `json:"message"`
+	Raw     map[string]any `json:"-"`
+}
+
+func (g *gantryDoctorCheck) UnmarshalJSON(data []byte) error {
+	type alias gantryDoctorCheck
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*g = gantryDoctorCheck(decoded)
+	g.Raw = raw
+	return nil
+}
+
+type gantryInventory struct {
+	Inventory struct {
+		Tools      []map[string]any `json:"tools"`
+		Skills     []map[string]any `json:"skills"`
+		MCPServers []map[string]any `json:"mcpServers"`
+	} `json:"inventory"`
+}
+
+type gantryCapabilityList struct {
+	Capabilities []gantryCapability `json:"capabilities"`
+}
+
+type gantryCapability struct {
+	ID          string         `json:"id"`
+	Version     any            `json:"version"`
+	DisplayName string         `json:"displayName"`
+	Category    string         `json:"category"`
+	Risk        string         `json:"risk"`
+	Can         string         `json:"can"`
+	Cannot      string         `json:"cannot"`
+	Source      string         `json:"source"`
+	Raw         map[string]any `json:"-"`
+}
+
+func (g *gantryCapability) UnmarshalJSON(data []byte) error {
+	type alias gantryCapability
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*g = gantryCapability(decoded)
+	g.Raw = raw
+	return nil
 }
 
 type gantrySkillBinding struct {

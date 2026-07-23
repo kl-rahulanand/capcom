@@ -22,6 +22,7 @@ type AdapterOption = {
   id: RuntimeType
   name: string
   tokenLabel: string
+  readOnly?: boolean
 }
 
 type AddInstanceDialogProps = {
@@ -39,7 +40,8 @@ const ADAPTERS: AdapterOption[] = [
   {
     id: "langgraph",
     name: "LangGraph",
-    tokenLabel: "LangGraph Control API token",
+    tokenLabel: "LangSmith API key",
+    readOnly: true,
   },
   {
     id: "temporal",
@@ -92,6 +94,7 @@ export function AddInstanceDialog({
 
   const selectedAdapter =
     ADAPTERS.find((adapter) => adapter.id === adapterId) ?? ADAPTERS[0]
+
   const canSubmit =
     displayName.trim() &&
     endpoint.trim() &&
@@ -122,7 +125,7 @@ export function AddInstanceDialog({
           display_name: trimmedDisplayName,
           environment,
           runtime_type: adapterId,
-          mode,
+          mode: selectedAdapter.readOnly ? "read_only" : mode,
           endpoint: endpoint.trim(),
           auth_ref: authRef,
           actor: "local-operator",
@@ -165,7 +168,15 @@ export function AddInstanceDialog({
           {step === 1 ? (
             <AdapterStep
               adapterId={adapterId}
-              onAdapterChange={setAdapterId}
+              onAdapterChange={(nextAdapterId) => {
+                setAdapterId(nextAdapterId)
+                const nextAdapter = ADAPTERS.find(
+                  (adapter) => adapter.id === nextAdapterId
+                )
+                if (nextAdapter?.readOnly) {
+                  setMode("read_only")
+                }
+              }}
             />
           ) : (
             <DetailsStep
@@ -320,6 +331,7 @@ function DetailsStep({
           className={SELECT_CLASS}
           value={mode}
           onChange={(event) => onModeChange(event.target.value as RuntimeMode)}
+          disabled={selectedAdapter.readOnly}
         >
           {MODES.map((item) => (
             <option key={item} value={item}>
@@ -335,7 +347,7 @@ function DetailsStep({
           autoComplete="off"
           value={token}
           onChange={(event) => onTokenChange(event.target.value)}
-          placeholder="Token"
+          placeholder={selectedAdapter.id === "langgraph" ? "Local development may use any non-empty placeholder" : "Token"}
           className="font-hud"
           required
         />

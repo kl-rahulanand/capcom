@@ -22,6 +22,11 @@ type RuntimeSyncRepository interface {
 	ListPersistedAgents(ctx context.Context, runtimeID string) ([]domain.PersistedAgent, error)
 	GetPersistedAgent(ctx context.Context, agentID string) (domain.PersistedAgentDetail, error)
 	ListSubagentExecutions(ctx context.Context, runtimeID, agentID string) ([]domain.PersistedSubagentExecution, error)
+	ListRuntimeExecutions(ctx context.Context, runtimeID, agentID, kind string, limit int) ([]domain.PersistedRuntimeExecution, error)
+	ListRuntimeDiagnostics(ctx context.Context, runtimeID string) ([]domain.PersistedRuntimeDiagnostic, error)
+	ListRuntimeInventory(ctx context.Context, runtimeID, kind string) ([]domain.PersistedRuntimeInventory, error)
+	ListRuntimeCapabilities(ctx context.Context, runtimeID string) ([]domain.PersistedRuntimeCapability, error)
+	ListAgentDelegations(ctx context.Context, runtimeID, runtimeAgentID string) ([]domain.PersistedAgentDelegation, error)
 }
 
 type RuntimeSyncService struct {
@@ -137,7 +142,89 @@ func (s RuntimeSyncService) ListSubagentExecutions(ctx context.Context, runtimeI
 	return s.store.ListSubagentExecutions(ctx, runtimeID, agentID)
 }
 
+func (s RuntimeSyncService) ListRuntimeExecutions(ctx context.Context, runtimeID, agentID, kind string, limit int) ([]domain.PersistedRuntimeExecution, error) {
+	return s.store.ListRuntimeExecutions(ctx, runtimeID, agentID, kind, limit)
+}
+
+func (s RuntimeSyncService) ListRuntimeDiagnostics(ctx context.Context, runtimeID string) ([]domain.PersistedRuntimeDiagnostic, error) {
+	return s.store.ListRuntimeDiagnostics(ctx, runtimeID)
+}
+
+func (s RuntimeSyncService) ListRuntimeInventory(ctx context.Context, runtimeID, kind string) ([]domain.PersistedRuntimeInventory, error) {
+	return s.store.ListRuntimeInventory(ctx, runtimeID, kind)
+}
+
+func (s RuntimeSyncService) ListRuntimeCapabilities(ctx context.Context, runtimeID string) ([]domain.PersistedRuntimeCapability, error) {
+	return s.store.ListRuntimeCapabilities(ctx, runtimeID)
+}
+
+func (s RuntimeSyncService) ListAgentDelegations(ctx context.Context, runtimeID, agentID string) ([]domain.PersistedAgentDelegation, error) {
+	runtimeAgentID := ""
+	if strings.TrimSpace(agentID) != "" {
+		detail, err := s.GetAgent(ctx, agentID)
+		if err != nil {
+			return nil, err
+		}
+		if runtimeID != "" && detail.Agent.RuntimeConnectionID != runtimeID {
+			return nil, fmt.Errorf("agent does not belong to runtime instance")
+		}
+		runtimeID = detail.Agent.RuntimeConnectionID
+		runtimeAgentID = detail.Agent.RuntimeAgentID
+	}
+	return s.store.ListAgentDelegations(ctx, runtimeID, runtimeAgentID)
+}
+
 func validateRuntimeSnapshot(snapshot domain.RuntimeSnapshot) error {
+	diagnostics := map[string]struct{}{}
+	for _, item := range snapshot.Diagnostics {
+		id := strings.TrimSpace(item.CheckID)
+		if id == "" {
+			return fmt.Errorf("snapshot contains a diagnostic without check id")
+		}
+		if _, ok := diagnostics[id]; ok {
+			return fmt.Errorf("snapshot contains duplicate diagnostic %q", id)
+		}
+		diagnostics[id] = struct{}{}
+	}
+	inventory := map[string]struct{}{}
+	for _, item := range snapshot.Inventory {
+		if strings.TrimSpace(item.Kind) == "" || strings.TrimSpace(item.RuntimeItemID) == "" {
+			return fmt.Errorf("snapshot contains inventory without kind or runtime id")
+		}
+		key := item.Kind + ":" + item.RuntimeItemID
+		if _, ok := inventory[key]; ok {
+			return fmt.Errorf("snapshot contains duplicate inventory item %q", key)
+		}
+		inventory[key] = struct{}{}
+	}
+	capabilities := map[string]struct{}{}
+	for _, item := range snapshot.CapabilityCatalog {
+		if strings.TrimSpace(item.RuntimeCapabilityID) == "" || strings.TrimSpace(item.Version) == "" {
+			return fmt.Errorf("snapshot contains capability without runtime id or version")
+		}
+		key := item.RuntimeCapabilityID + ":" + item.Version
+		if _, ok := capabilities[key]; ok {
+			return fmt.Errorf("snapshot contains duplicate capability %q", key)
+		}
+		capabilities[key] = struct{}{}
+	}
+	delegations := map[string]struct{}{}
+	for _, item := range snapshot.AgentDelegations {
+		orchestrator := strings.TrimSpace(item.OrchestratorRuntimeAgentID)
+		delegate := strings.TrimSpace(item.DelegateRuntimeAgentID)
+		ref := strings.TrimSpace(item.DelegateRef)
+		if orchestrator == "" || (delegate == "" && ref == "") {
+			return fmt.Errorf("snapshot contains delegation without orchestrator or delegate identity")
+		}
+		key := orchestrator + ":ref:" + ref
+		if ref == "" {
+			key = orchestrator + ":agent:" + delegate
+		}
+		if _, ok := delegations[key]; ok {
+			return fmt.Errorf("snapshot contains duplicate agent delegation %q", key)
+		}
+		delegations[key] = struct{}{}
+	}
 	seen := map[string]struct{}{}
 	for _, item := range snapshot.Agents {
 		id := strings.TrimSpace(item.Agent.RuntimeAgentID)
@@ -163,6 +250,18 @@ func validateRuntimeSnapshot(snapshot domain.RuntimeSnapshot) error {
 		}
 	}
 	executions := map[string]struct{}{}
+	for _, execution := range snapshot.Executions {
+		id := strings.TrimSpace(execution.RuntimeExecutionID)
+		if id == "" || strings.TrimSpace(execution.Kind) == "" {
+			return fmt.Errorf("snapshot contains a runtime execution without kind or runtime id")
+		}
+		key := execution.Kind + ":" + id
+		if _, ok := executions[key]; ok {
+			return fmt.Errorf("snapshot contains duplicate runtime execution %q", key)
+		}
+		executions[key] = struct{}{}
+	}
+	executions = map[string]struct{}{}
 	for _, execution := range snapshot.SubagentExecutions {
 		id := strings.TrimSpace(execution.RuntimeExecutionID)
 		if id == "" {
@@ -191,7 +290,8 @@ func (s RuntimeSyncService) auditSync(ctx context.Context, run domain.RuntimeSyn
 	_, _ = s.audit.Create(ctx, domain.AuditEvent{RuntimeConnectionID: run.RuntimeConnectionID, Actor: actor,
 		EventType: eventType, TargetType: "runtime_sync_run", TargetID: run.ID, Reason: reason, Result: result,
 		Metadata: map[string]any{"trigger": run.Trigger, "status": run.Status, "agents_seen": run.AgentsSeen,
-			"skills_seen": run.SkillsSeen, "duration_ms": run.DurationMS, "error_code": run.ErrorCode}})
+			"skills_seen": run.SkillsSeen, "delegations_seen": run.DelegationsSeen,
+			"duration_ms": run.DurationMS, "error_code": run.ErrorCode}})
 }
 
 func sanitizeRuntimeError(err error) string {

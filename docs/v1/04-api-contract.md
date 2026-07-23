@@ -45,6 +45,7 @@ GET /v1/runtime-connections/{id}/sync-runs
 GET /v1/runtime-connections/{id}/agents
 GET /v1/runtime-connections/{id}/agents/{runtimeAgentId}/access
 GET /v1/runtime-connections/{id}/agents/{runtimeAgentId}/skills
+GET /v1/runtime-instances/{id}/agent-delegations
 
 POST /v1/runtime-instances
 GET /v1/runtime-instances
@@ -125,6 +126,7 @@ Response:
 ```text
 GET /v1/agents
 GET /v1/agents/{id}
+GET /v1/agents/{id}/delegations
 GET /v1/agents/{id}/desired-state
 PUT /v1/agents/{id}/desired-state
 GET /v1/agents/{id}/actual-state
@@ -137,6 +139,10 @@ GET /v1/subagent-executions
 observations and accepts `runtime_connection_id` and `agent_id` filters. These
 records contain parent run and owning agent references but are never returned
 as durable agents.
+
+Delegation reads return durable directed callable-agent relationships. They
+include configured/resolved provenance and must not be interpreted as
+parent-child hierarchy.
 
 Agent detail response should include:
 

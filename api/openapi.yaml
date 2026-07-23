@@ -2,7 +2,14 @@ openapi: 3.1.0
 info:
   title: Capcom API
   version: 0.1.0
-  description: Runtime-agnostic AgentOps control-plane API.
+  description: |
+    Runtime-agnostic AgentOps control-plane API.
+
+    All `/v1/*` endpoints require `Authorization: Bearer <CAPCOM_ADMIN_TOKEN>`; only
+    `GET /healthz` is unauthenticated. Browser clients on a different origin (the Next.js
+    console) are supported via CORS: the allowed origins are configured with
+    `CAPCOM_CORS_ALLOWED_ORIGINS` (default `http://localhost:3000,http://127.0.0.1:3000`),
+    and preflight `OPTIONS` requests return `204` without requiring admin auth.
 servers:
   - url: http://127.0.0.1:8080
 security:
@@ -342,6 +349,99 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SubagentExecution"
+  /v1/runtime-instances/{id}/executions:
+    get:
+      summary: List runtime-neutral executions belonging to one runtime instance
+      operationId: listRuntimeInstanceExecutions
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+        - name: runtime_agent_id
+          in: query
+          schema:
+            type: string
+        - name: kind
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+      responses:
+        "200":
+          description: Instance-scoped runtime executions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeExecution"
+  /v1/runtime-instances/{id}/diagnostics:
+    get:
+      summary: List normalized runtime doctor checks
+      operationId: listRuntimeDiagnostics
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+      responses:
+        "200":
+          description: Latest diagnostics for the runtime instance
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeDiagnostic"
+  /v1/runtime-instances/{id}/inventory:
+    get:
+      summary: List normalized runtime inventory
+      operationId: listRuntimeInventory
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+        - name: kind
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tools, skills, and MCP servers from the runtime instance
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeInventoryItem"
+  /v1/runtime-instances/{id}/capabilities:
+    get:
+      summary: List normalized approved runtime capabilities
+      operationId: listRuntimeCapabilities
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+      responses:
+        "200":
+          description: Immutable capability manifests from the runtime instance
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeCapability"
+  /v1/runtime-instances/{id}/agent-delegations:
+    get:
+      summary: List durable agent delegation relationships for one runtime instance
+      operationId: listRuntimeInstanceAgentDelegations
+      parameters:
+        - $ref: "#/components/parameters/RuntimeConnectionID"
+      responses:
+        "200":
+          description: Directed callable-agent relationships
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentDelegation"
   /v1/runtime-instances/{id}/live/agents:
     get:
       summary: Read live agents through one runtime instance adapter
@@ -432,6 +532,25 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/RuntimeAgentSkill"
+  /v1/agents/{id}/delegations:
+    get:
+      summary: List outgoing and incoming durable delegation relationships for one agent
+      operationId: listAgentDelegations
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Directed relationships involving the selected agent
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentDelegation"
   /v1/agents/{id}/actions/reconcile-access:
     post:
       summary: Validate or replace an agent access document
@@ -451,6 +570,31 @@ paths:
       responses:
         "200":
           description: Control action result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlAction"
+        "400":
+          $ref: "#/components/responses/Error"
+  /v1/agents/{id}/actions/set-status:
+    post:
+      summary: Validate or change an agent lifecycle status
+      operationId: setAgentStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAgentStatusRequest"
+      responses:
+        "200":
+          description: Audited control action result
           content:
             application/json:
               schema:
@@ -479,6 +623,38 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SubagentExecution"
+  /v1/runtime-executions:
+    get:
+      summary: List runtime-neutral execution observations
+      operationId: listRuntimeExecutions
+      parameters:
+        - name: runtime_connection_id
+          in: query
+          schema:
+            type: string
+        - name: runtime_agent_id
+          in: query
+          schema:
+            type: string
+        - name: kind
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+      responses:
+        "200":
+          description: Runtime execution observations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeExecution"
 components:
   securitySchemes:
     bearerAuth:
@@ -534,7 +710,7 @@ components:
             type: string
         runtime_type:
           type: string
-          enum: [gantry]
+          enum: [gantry, langgraph]
         mode:
           type: string
           enum: [read_only, control_enabled]
@@ -590,7 +766,7 @@ components:
           type: string
         runtime_type:
           type: string
-          enum: [gantry]
+          enum: [gantry, langgraph]
         mode:
           type: string
           enum: [read_only, control_enabled]
@@ -627,17 +803,31 @@ components:
           additionalProperties: true
     RuntimeCapabilities:
       type: object
-      required: [read_agents, read_agent_hierarchy, read_agent_skills, read_agent_access, replace_agent_access]
+      required: [read_agents, read_agent_hierarchy, read_agent_delegates, read_agent_skills, read_agent_access, replace_agent_access]
       properties:
         read_agents:
           type: boolean
         read_agent_hierarchy:
+          type: boolean
+        read_agent_delegates:
           type: boolean
         read_agent_skills:
           type: boolean
         read_agent_access:
           type: boolean
         replace_agent_access:
+          type: boolean
+        read_subagent_executions:
+          type: boolean
+        read_executions:
+          type: boolean
+        read_diagnostics:
+          type: boolean
+        read_inventory:
+          type: boolean
+        read_capability_catalog:
+          type: boolean
+        set_agent_status:
           type: boolean
     RuntimeAgent:
       type: object
@@ -781,6 +971,16 @@ components:
           type: integer
         skills_seen:
           type: integer
+        executions_seen:
+          type: integer
+        diagnostics_seen:
+          type: integer
+        inventory_seen:
+          type: integer
+        capabilities_seen:
+          type: integer
+        delegations_seen:
+          type: integer
         error_code:
           type: string
         error_message:
@@ -849,6 +1049,125 @@ components:
         metadata:
           type: object
           additionalProperties: true
+    AgentDelegation:
+      type: object
+      required: [id, runtime_connection_id, orchestrator_runtime_agent_id, delegate_ref, configured, resolved, revision, status, observed_at]
+      properties:
+        id:
+          type: string
+        runtime_connection_id:
+          type: string
+        orchestrator_runtime_agent_id:
+          type: string
+        delegate_runtime_agent_id:
+          type: string
+        delegate_ref:
+          type: string
+        tool_name:
+          type: string
+        display_name:
+          type: string
+        persona:
+          type: string
+        configured:
+          type: boolean
+        resolved:
+          type: boolean
+        revision:
+          type: integer
+        status:
+          type: string
+          enum: [active, stale]
+        observed_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+    RuntimeExecution:
+      type: object
+      required: [id, runtime_connection_id, runtime_execution_id, kind, status, observed_at]
+      properties:
+        id:
+          type: string
+        runtime_connection_id:
+          type: string
+        runtime_execution_id:
+          type: string
+        parent_runtime_execution_id:
+          type: string
+        runtime_agent_id:
+          type: string
+        kind:
+          type: string
+        status:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        observed_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+    RuntimeDiagnostic:
+      type: object
+      required: [id, runtime_connection_id, check_id, status, message, observed_at]
+      properties:
+        id: { type: string }
+        runtime_connection_id: { type: string }
+        check_id: { type: string }
+        status: { type: string }
+        message: { type: string }
+        observed_at: { type: string, format: date-time }
+        metadata: { type: object, additionalProperties: true }
+    RuntimeInventoryItem:
+      type: object
+      required: [id, runtime_connection_id, runtime_item_id, kind, name, status, observed_at]
+      properties:
+        id: { type: string }
+        runtime_connection_id: { type: string }
+        runtime_item_id: { type: string }
+        kind: { type: string, enum: [tool, skill, mcp_server] }
+        name: { type: string }
+        status: { type: string }
+        provider: { type: string }
+        source: { type: string }
+        observed_at: { type: string, format: date-time }
+        metadata: { type: object, additionalProperties: true }
+    RuntimeCapability:
+      type: object
+      required: [id, runtime_connection_id, runtime_capability_id, version, name, category, risk, observed_at]
+      properties:
+        id: { type: string }
+        runtime_connection_id: { type: string }
+        runtime_capability_id: { type: string }
+        version: { type: string }
+        name: { type: string }
+        category: { type: string }
+        risk: { type: string }
+        can: { type: string }
+        cannot: { type: string }
+        source: { type: string }
+        observed_at: { type: string, format: date-time }
+        metadata: { type: object, additionalProperties: true }
+    SetAgentStatusRequest:
+      type: object
+      required: [status, actor, reason, idempotency_key]
+      properties:
+        status:
+          type: string
+          enum: [enabled, disabled]
+        actor: { type: string }
+        reason: { type: string }
+        idempotency_key: { type: string }
+        dry_run: { type: boolean, default: false }
     ReconcileAccessRequest:
       type: object
       required: [selections, actor, reason, idempotency_key]

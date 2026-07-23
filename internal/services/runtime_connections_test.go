@@ -171,6 +171,10 @@ func (a *recordingAdapter) ReplaceAgentAccess(_ context.Context, conn domain.Run
 	a.connection = conn
 	return &domain.AccessDocument{}, nil
 }
+func (a *recordingAdapter) SetAgentStatus(_ context.Context, conn domain.RuntimeConnection, _ string, _ domain.AgentStatus) (*domain.AgentSnapshot, error) {
+	a.connection = conn
+	return &domain.AgentSnapshot{}, nil
+}
 func (a *recordingAdapter) CollectSnapshot(_ context.Context, conn domain.RuntimeConnection) (*domain.RuntimeSnapshot, error) {
 	a.connection = conn
 	return &domain.RuntimeSnapshot{}, nil
@@ -204,6 +208,10 @@ func (fakeAdapter) GetAgentAccess(context.Context, domain.RuntimeConnection, str
 
 func (fakeAdapter) ReplaceAgentAccess(context.Context, domain.RuntimeConnection, string, domain.AccessDocument) (*domain.AccessDocument, error) {
 	return nil, nil
+}
+
+func (fakeAdapter) SetAgentStatus(context.Context, domain.RuntimeConnection, string, domain.AgentStatus) (*domain.AgentSnapshot, error) {
+	return &domain.AgentSnapshot{}, nil
 }
 
 func (fakeAdapter) CollectSnapshot(context.Context, domain.RuntimeConnection) (*domain.RuntimeSnapshot, error) {

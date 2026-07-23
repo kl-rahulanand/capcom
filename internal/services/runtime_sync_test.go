@@ -63,6 +63,9 @@ func (snapshotAdapter) GetAgentAccess(context.Context, domain.RuntimeConnection,
 func (snapshotAdapter) ReplaceAgentAccess(context.Context, domain.RuntimeConnection, string, domain.AccessDocument) (*domain.AccessDocument, error) {
 	return nil, nil
 }
+func (snapshotAdapter) SetAgentStatus(context.Context, domain.RuntimeConnection, string, domain.AgentStatus) (*domain.AgentSnapshot, error) {
+	return &domain.AgentSnapshot{}, nil
+}
 func (a snapshotAdapter) CollectSnapshot(context.Context, domain.RuntimeConnection) (*domain.RuntimeSnapshot, error) {
 	if a.err != nil {
 		return nil, a.err
@@ -112,4 +115,30 @@ func (*fakeSyncStore) GetPersistedAgent(context.Context, string) (domain.Persist
 }
 func (*fakeSyncStore) ListSubagentExecutions(context.Context, string, string) ([]domain.PersistedSubagentExecution, error) {
 	return nil, nil
+}
+
+func (*fakeSyncStore) ListRuntimeExecutions(context.Context, string, string, string, int) ([]domain.PersistedRuntimeExecution, error) {
+	return nil, nil
+}
+func (*fakeSyncStore) ListRuntimeDiagnostics(context.Context, string) ([]domain.PersistedRuntimeDiagnostic, error) {
+	return nil, nil
+}
+func (*fakeSyncStore) ListRuntimeInventory(context.Context, string, string) ([]domain.PersistedRuntimeInventory, error) {
+	return nil, nil
+}
+func (*fakeSyncStore) ListRuntimeCapabilities(context.Context, string) ([]domain.PersistedRuntimeCapability, error) {
+	return nil, nil
+}
+func (*fakeSyncStore) ListAgentDelegations(context.Context, string, string) ([]domain.PersistedAgentDelegation, error) {
+	return nil, nil
+}
+
+func TestValidateRuntimeSnapshotRejectsDuplicateDelegationRefs(t *testing.T) {
+	snapshot := domain.RuntimeSnapshot{AgentDelegations: []domain.AgentDelegationSnapshot{
+		{OrchestratorRuntimeAgentID: "agent:main", DelegateRuntimeAgentID: "agent:first", DelegateRef: "reviewer"},
+		{OrchestratorRuntimeAgentID: "agent:main", DelegateRuntimeAgentID: "agent:second", DelegateRef: "reviewer"},
+	}}
+	if err := validateRuntimeSnapshot(snapshot); err == nil {
+		t.Fatal("expected duplicate canonical delegate reference to be rejected")
+	}
 }

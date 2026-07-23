@@ -40,23 +40,41 @@ func (c Client) Kind() domain.RuntimeKind {
 }
 
 func (c Client) Check(ctx context.Context, conn domain.RuntimeConnection) (*runtimeadapter.CheckResult, error) {
-	var payload map[string]any
-	if err := c.doJSON(ctx, conn, http.MethodGet, "/v1/health", nil, &payload); err != nil {
+	var health map[string]any
+	if err := c.doJSON(ctx, conn, http.MethodGet, "/v1/health", nil, &health); err != nil {
 		return nil, err
+	}
+	var doctor gantryDoctor
+	if err := c.doJSON(ctx, conn, http.MethodGet, "/v1/doctor", nil, &doctor); err != nil {
+		return nil, fmt.Errorf("gantry doctor failed: %w", err)
+	}
+	diagnostics, status := normalizeDoctor(doctor, time.Now().UTC())
+	message := "gantry health and doctor checks succeeded"
+	if status == domain.RuntimeStatusDegraded {
+		message = "gantry doctor reported warnings"
+	}
+	if status == domain.RuntimeStatusFailed {
+		message = "gantry doctor reported failing checks"
 	}
 
 	return &runtimeadapter.CheckResult{
-		Status:  domain.RuntimeStatusActive,
-		Message: "gantry health check succeeded",
+		Status:  status,
+		Message: message,
 		Capabilities: runtimeadapter.Capabilities{
 			ReadAgents:             true,
 			ReadAgentHierarchy:     false,
+			ReadAgentDelegates:     true,
 			ReadAgentSkills:        true,
 			ReadAgentAccess:        true,
 			ReplaceAgentAccess:     conn.Mode == domain.RuntimeModeControlEnabled,
 			ReadSubagentExecutions: true,
+			ReadDiagnostics:        true,
+			ReadInventory:          true,
+			ReadCapabilityCatalog:  true,
+			SetAgentStatus:         conn.Mode == domain.RuntimeModeControlEnabled,
 		},
-		Metadata: payload,
+		Metadata:    map[string]any{"health": health, "doctor_status": doctor.Status},
+		Diagnostics: diagnostics,
 	}, nil
 }
 
@@ -97,6 +115,92 @@ func (c Client) ListAgents(ctx context.Context, conn domain.RuntimeConnection) (
 	return snapshots, nil
 }
 
+func (c Client) ListAgentDelegates(ctx context.Context, conn domain.RuntimeConnection, runtimeAgentID string) ([]domain.AgentDelegationSnapshot, error) {
+	var payload gantryAgentDelegates
+	path := fmt.Sprintf("/v1/agents/%s/delegates", url.PathEscape(runtimeAgentID))
+	if err := c.doJSON(ctx, conn, http.MethodGet, path, nil, &payload); err != nil {
+		return nil, err
+	}
+
+	observedAt := time.Now().UTC()
+	configured := make(map[string]struct{}, len(payload.Delegates))
+	for _, ref := range payload.Delegates {
+		ref = strings.TrimSpace(ref)
+		if ref != "" {
+			configured[ref] = struct{}{}
+		}
+	}
+
+	items := make([]domain.AgentDelegationSnapshot, 0, len(payload.Resolved)+len(configured))
+	seenRefs := make(map[string]struct{}, len(payload.Resolved))
+	for _, delegate := range payload.Resolved {
+		ref := strings.TrimSpace(delegate.Ref)
+		delegateID := strings.TrimSpace(delegate.AgentID)
+		if ref == "" {
+			ref = delegateID
+		}
+		if ref == "" || delegateID == "" {
+			continue
+		}
+		_, isConfigured := configured[ref]
+		seenRefs[ref] = struct{}{}
+		items = append(items, domain.AgentDelegationSnapshot{
+			OrchestratorRuntimeAgentID: runtimeAgentID,
+			DelegateRuntimeAgentID:     delegateID,
+			DelegateRef:                ref,
+			ToolName:                   delegate.ToolName,
+			DisplayName:                delegate.DisplayName,
+			Persona:                    delegate.Persona,
+			Configured:                 isConfigured,
+			Resolved:                   true,
+			Revision:                   payload.Revision,
+			Status:                     "active",
+			ObservedAt:                 observedAt,
+			Metadata:                   map[string]any{"source": delegationSource(isConfigured)},
+			Raw:                        delegate.Raw,
+		})
+	}
+	for _, ref := range payload.Delegates {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		if _, ok := seenRefs[ref]; ok {
+			continue
+		}
+		items = append(items, domain.AgentDelegationSnapshot{
+			OrchestratorRuntimeAgentID: runtimeAgentID,
+			DelegateRuntimeAgentID:     gantryAgentIDForDelegateRef(ref),
+			DelegateRef:                ref,
+			Configured:                 true,
+			Resolved:                   false,
+			Revision:                   payload.Revision,
+			Status:                     "active",
+			ObservedAt:                 observedAt,
+			Metadata: map[string]any{
+				"source":                  "configured",
+				"runtime_agent_id_source": "gantry_settings_folder",
+			},
+			Raw:                        map[string]any{"ref": ref},
+		})
+	}
+	return items, nil
+}
+
+func gantryAgentIDForDelegateRef(ref string) string {
+	if strings.HasPrefix(ref, "agent:") {
+		return ref
+	}
+	return "agent:" + ref
+}
+
+func delegationSource(configured bool) string {
+	if configured {
+		return "configured"
+	}
+	return "conversation_bound"
+}
+
 func (c Client) CollectSnapshot(ctx context.Context, conn domain.RuntimeConnection) (*domain.RuntimeSnapshot, error) {
 	check, err := c.Check(ctx, conn)
 	if err != nil {
@@ -106,6 +210,14 @@ func (c Client) CollectSnapshot(ctx context.Context, conn domain.RuntimeConnecti
 	if err != nil {
 		return nil, fmt.Errorf("list agents for snapshot: %w", err)
 	}
+	inventory, err := c.ListInventory(ctx, conn)
+	if err != nil {
+		return nil, fmt.Errorf("list inventory for snapshot: %w", err)
+	}
+	capabilities, err := c.ListCapabilities(ctx, conn)
+	if err != nil {
+		return nil, fmt.Errorf("list capabilities for snapshot: %w", err)
+	}
 
 	observedAt := time.Now().UTC()
 	snapshot := &domain.RuntimeSnapshot{
@@ -114,14 +226,23 @@ func (c Client) CollectSnapshot(ctx context.Context, conn domain.RuntimeConnecti
 		Capabilities: map[string]bool{
 			"read_agents":              check.Capabilities.ReadAgents,
 			"read_agent_hierarchy":     check.Capabilities.ReadAgentHierarchy,
+			"read_agent_delegates":     check.Capabilities.ReadAgentDelegates,
 			"read_agent_skills":        check.Capabilities.ReadAgentSkills,
 			"read_agent_access":        check.Capabilities.ReadAgentAccess,
 			"replace_agent_access":     check.Capabilities.ReplaceAgentAccess,
 			"read_subagent_executions": check.Capabilities.ReadSubagentExecutions,
+			"read_diagnostics":         check.Capabilities.ReadDiagnostics,
+			"read_inventory":           check.Capabilities.ReadInventory,
+			"read_capability_catalog":  check.Capabilities.ReadCapabilityCatalog,
+			"set_agent_status":         check.Capabilities.SetAgentStatus,
 		},
-		Agents: make([]domain.SnapshotAgent, 0, len(agents)),
+		Agents:            make([]domain.SnapshotAgent, 0, len(agents)),
+		Diagnostics:       check.Diagnostics,
+		Inventory:         inventory,
+		CapabilityCatalog: capabilities,
 	}
 	items := make([]domain.SnapshotAgent, len(agents))
+	delegationItems := make([][]domain.AgentDelegationSnapshot, len(agents))
 	jobs := make(chan int)
 	workerCount := len(agents)
 	if workerCount > 4 {
@@ -146,12 +267,18 @@ func (c Client) CollectSnapshot(ctx context.Context, conn domain.RuntimeConnecti
 					errOnce.Do(func() { firstErr = fmt.Errorf("get access for agent %q: %w", agent.RuntimeAgentID, err) })
 					continue
 				}
+				delegations, err := c.ListAgentDelegates(ctx, conn, agent.RuntimeAgentID)
+				if err != nil {
+					errOnce.Do(func() { firstErr = fmt.Errorf("list delegates for agent %q: %w", agent.RuntimeAgentID, err) })
+					continue
+				}
 				agent.ObservedAt = observedAt
 				access.ObservedAt = observedAt
 				for i := range skills {
 					skills[i].ObservedAt = observedAt
 				}
 				items[index] = domain.SnapshotAgent{Agent: agent, Skills: skills, Access: *access}
+				delegationItems[index] = delegations
 			}
 		}()
 	}
@@ -164,12 +291,76 @@ func (c Client) CollectSnapshot(ctx context.Context, conn domain.RuntimeConnecti
 		return nil, firstErr
 	}
 	snapshot.Agents = items
+	for _, delegations := range delegationItems {
+		snapshot.AgentDelegations = append(snapshot.AgentDelegations, delegations...)
+	}
 	executions, err := c.listSubagentExecutions(ctx, conn, observedAt)
 	if err != nil {
 		return nil, fmt.Errorf("list subagent executions for snapshot: %w", err)
 	}
 	snapshot.SubagentExecutions = executions
 	return snapshot, nil
+}
+
+func (c Client) ListInventory(ctx context.Context, conn domain.RuntimeConnection) ([]domain.RuntimeInventorySnapshot, error) {
+	var payload gantryInventory
+	if err := c.doJSON(ctx, conn, http.MethodGet, "/v1/inventory", nil, &payload); err != nil {
+		return nil, err
+	}
+	observedAt := time.Now().UTC()
+	items := make([]domain.RuntimeInventorySnapshot, 0, len(payload.Inventory.Tools)+len(payload.Inventory.Skills)+len(payload.Inventory.MCPServers))
+	for _, group := range []struct {
+		kind  string
+		items []map[string]any
+	}{{"tool", payload.Inventory.Tools}, {"skill", payload.Inventory.Skills}, {"mcp_server", payload.Inventory.MCPServers}} {
+		for _, raw := range group.items {
+			id := mapString(raw, "id")
+			if id == "" {
+				continue
+			}
+			name := mapString(raw, "displayName")
+			if name == "" {
+				name = mapString(raw, "name")
+			}
+			if name == "" {
+				name = id
+			}
+			provider := mapString(raw, "provider")
+			if provider == "" {
+				provider = mapString(raw, "createdSource")
+			}
+			items = append(items, domain.RuntimeInventorySnapshot{
+				RuntimeItemID: id, Kind: group.kind, Name: name, Status: mapString(raw, "status"),
+				Provider: provider, Source: mapString(raw, "source"), ObservedAt: observedAt,
+				Metadata: inventoryMetadata(raw), Raw: raw,
+			})
+		}
+	}
+	return items, nil
+}
+
+func (c Client) ListCapabilities(ctx context.Context, conn domain.RuntimeConnection) ([]domain.RuntimeCapabilitySnapshot, error) {
+	var payload gantryCapabilityList
+	if err := c.doJSON(ctx, conn, http.MethodGet, "/v1/capabilities", nil, &payload); err != nil {
+		return nil, err
+	}
+	observedAt := time.Now().UTC()
+	items := make([]domain.RuntimeCapabilitySnapshot, 0, len(payload.Capabilities))
+	for _, capability := range payload.Capabilities {
+		if strings.TrimSpace(capability.ID) == "" {
+			continue
+		}
+		version := fmt.Sprint(capability.Version)
+		if capability.Version == nil || version == "<nil>" {
+			version = "unknown"
+		}
+		items = append(items, domain.RuntimeCapabilitySnapshot{
+			RuntimeCapabilityID: capability.ID, Version: version, Name: capability.DisplayName,
+			Category: capability.Category, Risk: capability.Risk, Can: capability.Can, Cannot: capability.Cannot,
+			Source: capability.Source, ObservedAt: observedAt, Metadata: capabilityMetadata(capability.Raw), Raw: capability.Raw,
+		})
+	}
+	return items, nil
 }
 
 func (c Client) listSubagentExecutions(ctx context.Context, conn domain.RuntimeConnection, observedAt time.Time) ([]domain.SubagentExecutionSnapshot, error) {
@@ -383,6 +574,79 @@ func (c Client) ReplaceAgentAccess(ctx context.Context, conn domain.RuntimeConne
 		ObservedAt: time.Now().UTC(),
 		Source:     "gantry",
 	}, nil
+}
+
+func (c Client) SetAgentStatus(ctx context.Context, conn domain.RuntimeConnection, runtimeAgentID string, status domain.AgentStatus) (*domain.AgentSnapshot, error) {
+	if conn.Mode != domain.RuntimeModeControlEnabled {
+		return nil, fmt.Errorf("runtime connection is read-only")
+	}
+	var runtimeStatus string
+	switch status {
+	case domain.AgentStatusEnabled:
+		runtimeStatus = "active"
+	case domain.AgentStatusDisabled:
+		runtimeStatus = "disabled"
+	default:
+		return nil, fmt.Errorf("agent status must be %q or %q", domain.AgentStatusEnabled, domain.AgentStatusDisabled)
+	}
+	path := fmt.Sprintf("/v1/agents/%s", url.PathEscape(runtimeAgentID))
+	var response gantryAgent
+	if err := c.doJSON(ctx, conn, http.MethodPatch, path, map[string]any{"status": runtimeStatus}, &response); err != nil {
+		return nil, err
+	}
+	return &domain.AgentSnapshot{
+		RuntimeAgentID: response.ID, Kind: gantryAgentKind(response.ID), Name: response.DisplayName(),
+		Status: response.StatusDomain(), ObservedAt: time.Now().UTC(), Metadata: response.Raw,
+	}, nil
+}
+
+func normalizeDoctor(doctor gantryDoctor, observedAt time.Time) ([]domain.RuntimeDiagnosticSnapshot, domain.RuntimeStatus) {
+	status := domain.RuntimeStatusActive
+	diagnostics := make([]domain.RuntimeDiagnosticSnapshot, 0, len(doctor.Checks))
+	for _, check := range doctor.Checks {
+		normalized := strings.ToLower(strings.TrimSpace(check.Status))
+		switch normalized {
+		case "warn", "warning", "degraded":
+			if status == domain.RuntimeStatusActive {
+				status = domain.RuntimeStatusDegraded
+			}
+		case "fail", "failed", "error", "critical":
+			status = domain.RuntimeStatusFailed
+		}
+		diagnostics = append(diagnostics, domain.RuntimeDiagnosticSnapshot{
+			CheckID: check.ID, Status: normalized, Message: check.Message, ObservedAt: observedAt,
+			Metadata: map[string]any{}, Raw: check.Raw,
+		})
+	}
+	switch strings.ToLower(strings.TrimSpace(doctor.Status)) {
+	case "warn", "warning", "degraded":
+		if status == domain.RuntimeStatusActive {
+			status = domain.RuntimeStatusDegraded
+		}
+	case "fail", "failed", "error", "critical":
+		status = domain.RuntimeStatusFailed
+	}
+	return diagnostics, status
+}
+
+func inventoryMetadata(raw map[string]any) map[string]any {
+	return map[string]any{
+		"description": mapString(raw, "description"), "category": mapString(raw, "category"),
+		"risk": mapString(raw, "risk"), "app_id": mapString(raw, "appId"),
+	}
+}
+
+func capabilityMetadata(raw map[string]any) map[string]any {
+	metadata := make(map[string]any, len(raw))
+	for key, value := range raw {
+		switch key {
+		case "id", "version", "displayName", "category", "risk", "can", "cannot", "source":
+			continue
+		default:
+			metadata[key] = value
+		}
+	}
+	return metadata
 }
 
 func (c Client) doJSON(ctx context.Context, conn domain.RuntimeConnection, method string, path string, body any, out any) error {

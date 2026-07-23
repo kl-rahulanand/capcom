@@ -23,10 +23,16 @@ export type RuntimeStatus =
 export type RuntimeCapabilities = {
   read_agents: boolean
   read_agent_hierarchy: boolean
+  read_agent_delegates?: boolean
   read_agent_skills: boolean
   read_agent_access: boolean
   replace_agent_access: boolean
   read_subagent_executions?: boolean
+  read_executions?: boolean
+  read_diagnostics?: boolean
+  read_inventory?: boolean
+  read_capability_catalog?: boolean
+  set_agent_status?: boolean
 }
 
 export type RuntimeInstance = {
@@ -127,6 +133,23 @@ export type RuntimeAgentAccess = {
   source: string
 }
 
+export type AgentDelegation = {
+  id: string
+  runtime_connection_id: string
+  orchestrator_runtime_agent_id: string
+  delegate_runtime_agent_id?: string
+  delegate_ref: string
+  tool_name?: string
+  display_name?: string
+  persona?: string
+  configured: boolean
+  resolved: boolean
+  revision: number
+  status: "active" | "stale" | string
+  observed_at: string
+  metadata?: JsonObject
+}
+
 export type SubagentExecution = {
   id: string
   runtime_connection_id: string
@@ -137,6 +160,20 @@ export type SubagentExecution = {
   status: string
   description?: string
   summary?: string
+  started_at?: string | null
+  ended_at?: string | null
+  observed_at: string
+  metadata?: JsonObject
+}
+
+export type RuntimeExecution = {
+  id: string
+  runtime_connection_id: string
+  runtime_execution_id: string
+  parent_runtime_execution_id?: string
+  runtime_agent_id?: string
+  kind: string
+  status: string
   started_at?: string | null
   ended_at?: string | null
   observed_at: string
@@ -155,8 +192,59 @@ export type RuntimeSyncRun = {
   skills_seen?: number
   bindings_seen?: number
   access_documents_seen?: number
+  executions_seen?: number
+  diagnostics_seen?: number
+  inventory_seen?: number
+  capabilities_seen?: number
+  delegations_seen?: number
   error_code?: string
   error_message?: string
+}
+
+export type RuntimeDiagnostic = {
+  id: string
+  runtime_connection_id: string
+  check_id: string
+  status: string
+  message: string
+  observed_at: string
+  metadata?: JsonObject
+}
+
+export type RuntimeInventoryItem = {
+  id: string
+  runtime_connection_id: string
+  runtime_item_id: string
+  kind: "tool" | "skill" | "mcp_server" | string
+  name: string
+  status: string
+  provider?: string
+  source?: string
+  observed_at: string
+  metadata?: JsonObject
+}
+
+export type RuntimeCapability = {
+  id: string
+  runtime_connection_id: string
+  runtime_capability_id: string
+  version: string
+  name: string
+  category: string
+  risk: string
+  can?: string
+  cannot?: string
+  source?: string
+  observed_at: string
+  metadata?: JsonObject
+}
+
+export type SetAgentStatusRequest = {
+  status: "enabled" | "disabled"
+  actor: string
+  reason: string
+  idempotency_key: string
+  dry_run?: boolean
 }
 
 export type SyncRuntimeRequest = {

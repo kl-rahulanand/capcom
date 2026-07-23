@@ -192,6 +192,48 @@ func handleListInstanceSubagentExecutions(cfg RouterConfig) http.HandlerFunc {
 	}
 }
 
+func handleListRuntimeExecutions(cfg RouterConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cfg.RuntimeSync == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "sync_not_configured"})
+			return
+		}
+		writeRuntimeExecutions(w, r, cfg, r.URL.Query().Get("runtime_connection_id"))
+	}
+}
+
+func handleListInstanceRuntimeExecutions(cfg RouterConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cfg.RuntimeSync == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "sync_not_configured"})
+			return
+		}
+		writeRuntimeExecutions(w, r, cfg, r.PathValue("id"))
+	}
+}
+
+func writeRuntimeExecutions(w http.ResponseWriter, r *http.Request, cfg RouterConfig, runtimeID string) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := cfg.RuntimeSync.ListRuntimeExecutions(r.Context(), runtimeID,
+		r.URL.Query().Get("runtime_agent_id"), r.URL.Query().Get("kind"), limit)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, map[string]any{
+			"id": item.ID, "runtime_connection_id": item.RuntimeConnectionID,
+			"runtime_execution_id":        item.RuntimeExecutionID,
+			"parent_runtime_execution_id": item.ParentRuntimeExecutionID,
+			"runtime_agent_id":            item.RuntimeAgentID, "kind": item.Kind, "status": item.Status,
+			"started_at": item.StartedAt, "ended_at": item.EndedAt, "observed_at": item.ObservedAt,
+			"metadata": item.Metadata,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func loadPersistedAgent(w http.ResponseWriter, r *http.Request, cfg RouterConfig) (domain.PersistedAgentDetail, bool) {
 	if cfg.RuntimeSync == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "sync_not_configured"})
@@ -213,7 +255,10 @@ func syncRunResponse(run domain.RuntimeSyncRun) map[string]any {
 	return map[string]any{"id": run.ID, "runtime_connection_id": run.RuntimeConnectionID, "trigger": run.Trigger, "status": run.Status,
 		"started_at": run.StartedAt, "finished_at": run.FinishedAt, "duration_ms": run.DurationMS, "agents_seen": run.AgentsSeen,
 		"skills_seen": run.SkillsSeen, "bindings_seen": run.BindingsSeen, "access_documents_seen": run.AccessDocumentsSeen,
-		"error_code": run.ErrorCode, "error_message": run.ErrorMessage}
+		"executions_seen":  run.ExecutionsSeen,
+		"diagnostics_seen": run.DiagnosticsSeen, "inventory_seen": run.InventorySeen, "capabilities_seen": run.CapabilitiesSeen,
+		"delegations_seen": run.DelegationsSeen,
+		"error_code":       run.ErrorCode, "error_message": run.ErrorMessage}
 }
 
 func persistedAgentResponse(agent domain.PersistedAgent) map[string]any {

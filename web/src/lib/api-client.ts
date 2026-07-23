@@ -1,4 +1,5 @@
 import type {
+  AgentDelegation,
   CreateRuntimeInstanceRequest,
   CreateSecretRequest,
   ControlAction,
@@ -8,9 +9,14 @@ import type {
   RuntimeAgentAccess,
   RuntimeAgentSkill,
   RuntimeConnectionTestResult,
+  RuntimeCapability,
+  RuntimeDiagnostic,
+  RuntimeExecution,
+  RuntimeInventoryItem,
   RuntimeInstance,
   RuntimeSyncRun,
   SubagentExecution,
+  SetAgentStatusRequest,
   SyncRuntimeRequest,
 } from "@/lib/api-types"
 
@@ -113,6 +119,16 @@ export const capcomApi = {
     request<RuntimeSyncRun[]>(`/v1/runtime-instances/${id}/sync-runs`),
   listRuntimeInstanceAgents: (id: string) =>
     request<PersistedAgent[]>(`/v1/runtime-instances/${id}/agents`),
+  listRuntimeInstanceExecutions: (id: string) =>
+    request<RuntimeExecution[]>(`/v1/runtime-instances/${id}/executions`),
+  listRuntimeInstanceDiagnostics: (id: string) =>
+    request<RuntimeDiagnostic[]>(`/v1/runtime-instances/${id}/diagnostics`),
+  listRuntimeInstanceInventory: (id: string) =>
+    request<RuntimeInventoryItem[]>(`/v1/runtime-instances/${id}/inventory`),
+  listRuntimeInstanceCapabilities: (id: string) =>
+    request<RuntimeCapability[]>(`/v1/runtime-instances/${id}/capabilities`),
+  listRuntimeInstanceAgentDelegations: (id: string) =>
+    request<AgentDelegation[]>(`/v1/runtime-instances/${id}/agent-delegations`),
   listRuntimeInstanceSubagentExecutions: (id: string, agentId?: string) =>
     request<SubagentExecution[]>(
       `/v1/runtime-instances/${id}/subagent-executions${searchParams({
@@ -130,6 +146,8 @@ export const capcomApi = {
     request<RuntimeAgentSkill[]>(`/v1/agents/${id}/skills`),
   getAgentAccess: (id: string) =>
     request<RuntimeAgentAccess>(`/v1/agents/${id}/access`),
+  listAgentDelegations: (id: string) =>
+    request<AgentDelegation[]>(`/v1/agents/${id}/delegations`),
   listSubagentExecutions: (params: {
     runtimeConnectionId?: string
     agentId?: string
@@ -142,6 +160,11 @@ export const capcomApi = {
     ),
   reconcileAgentAccess: (id: string, body: ReconcileAccessRequest) =>
     request<ControlAction>(`/v1/agents/${id}/actions/reconcile-access`, {
+      method: "POST",
+      body,
+    }),
+  setAgentStatus: (id: string, body: SetAgentStatusRequest) =>
+    request<ControlAction>(`/v1/agents/${id}/actions/set-status`, {
       method: "POST",
       body,
     }),

@@ -2,10 +2,12 @@
 
 import * as React from "react"
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query"
+import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
 import { AddInstanceDialog } from "@/components/add-instance-dialog"
 import { AgentDrilldownDrawer } from "@/components/agent-drilldown-drawer"
+import { RuntimeCatalogPanel } from "@/components/runtime-catalog-panel"
 import {
   AgentTableRow,
 } from "@/components/agent-table"
@@ -31,6 +33,7 @@ import {
 } from "@/components/sync-dialog"
 import {
   buildAdaptersModel,
+  relativeTime,
   statusClass,
   type AdapterInstance,
   type AdapterModel,
@@ -40,6 +43,7 @@ import {
   queryKeys,
   usePersistedAgentsQuery,
   useRuntimeInstanceAgentsQuery,
+  useRuntimeInstanceExecutionsQuery,
   useRuntimeInstancesQuery,
   useSyncRuntimeInstanceMutation,
   useTestRuntimeInstanceMutation,
@@ -48,6 +52,7 @@ import type {
   PersistedAgent,
   RuntimeCapabilities,
   RuntimeConnectionTestResult,
+  RuntimeExecution,
   RuntimeInstance,
   RuntimeType,
   RuntimeSyncRun,
@@ -112,6 +117,18 @@ export function AdapterDetail({ adapterId }: { adapterId: string }) {
         ),
         ...runs.map((run) =>
           queryClient.invalidateQueries({
+            queryKey: queryKeys.runtimeInstanceExecutions(
+              run.runtime_connection_id
+            ),
+          })
+        ),
+        ...runs.flatMap((run) => [
+          queryClient.invalidateQueries({ queryKey: queryKeys.runtimeInstanceDiagnostics(run.runtime_connection_id) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.runtimeInstanceInventory(run.runtime_connection_id) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.runtimeInstanceCapabilities(run.runtime_connection_id) }),
+        ]),
+        ...runs.map((run) =>
+          queryClient.invalidateQueries({
             queryKey: queryKeys.runtimeInstanceSyncRuns(
               run.runtime_connection_id
             ),
@@ -153,7 +170,7 @@ export function AdapterDetail({ adapterId }: { adapterId: string }) {
             </Badge>
           </div>
           <p className="mt-1 text-[13px] text-[var(--mu)]">
-            {adapter.instanceCount} instances connected · {adapter.agentCount} agents running · state re-imported automatically every{" "}
+            {adapter.instanceCount} instances connected / {adapter.agentCount} agents running / state re-imported automatically every{" "}
             {syncIntervalLabel(adapter.instances)}
           </p>
         </div>
@@ -177,7 +194,8 @@ export function AdapterDetail({ adapterId }: { adapterId: string }) {
             className="shadow-[0_0_0_3px_var(--glow)] hover:brightness-[1.08]"
             onClick={() => setSyncAllOpen(true)}
           >
-            ↻ Re-import all instances
+            <RefreshCw className="size-4" />
+            Re-import all instances
           </Button>
         </div>
       </div>
@@ -238,13 +256,15 @@ function InstanceGroup({
   const [open, setOpen] = React.useState(defaultOpen)
   const [syncOpen, setSyncOpen] = React.useState(false)
   const agentsQuery = useRuntimeInstanceAgentsQuery(item.instance.id)
+  const executionsQuery = useRuntimeInstanceExecutionsQuery(item.instance.id)
   const syncMutation = useSyncRuntimeInstanceMutation(item.instance.id)
   const agents = agentsQuery.data ?? []
+  const executions = executionsQuery.data ?? []
   const shownAgents = agents.slice(0, AGENT_PREVIEW_LIMIT)
   const styles = statusClass(item.status)
   const updateLabel =
     item.status === "failed"
-      ? `import failed · ${item.updated}`
+      ? `import failed / ${item.updated}`
       : `updated ${item.updated}`
 
   return (
@@ -263,7 +283,11 @@ function InstanceGroup({
               setOpen((value) => !value)
             }}
           >
-            {open ? "▾" : "▸"}
+            {open ? (
+              <ChevronDown className="size-4" />
+            ) : (
+              <ChevronRight className="size-4" />
+            )}
           </button>
           <span className={cn("size-2 rounded-full", styles.dot)} />
           <span className="font-hud text-sm font-semibold text-[var(--tx)]">
@@ -280,7 +304,10 @@ function InstanceGroup({
               "loading agents"
             ) : (
               <>
-                {agents.length} agents · <InstanceSkillTotal agents={agents} /> skills
+                {agents.length} agents / <InstanceSkillTotal agents={agents} /> skills
+                {item.instance.runtime_type === "langgraph" || executions.length
+                  ? ` / ${executions.length} executions`
+                  : null}
               </>
             )}
           </span>
@@ -303,7 +330,8 @@ function InstanceGroup({
                 setSyncOpen(true)
               }}
             >
-              ↻ Re-import
+              <RefreshCw className="size-3.5" />
+              Re-import
             </Button>
           </div>
         </div>
@@ -316,6 +344,16 @@ function InstanceGroup({
               totalAgents={agents.length}
               onAgentClick={onAgentClick}
             />
+            {item.instance.runtime_type === "gantry" ? (
+              <RuntimeCatalogPanel runtimeId={item.instance.id} />
+            ) : null}
+            {item.instance.runtime_type === "langgraph" || executions.length ? (
+              <RuntimeExecutionsPanel
+                loading={executionsQuery.isLoading}
+                executions={executions}
+                agents={agents}
+              />
+            ) : null}
             <InstanceCapabilityPanel instance={item.instance} />
           </div>
         </CollapsibleContent>
@@ -403,6 +441,281 @@ function AgentSubTable({
       ) : null}
     </div>
   )
+}
+
+function RuntimeExecutionsPanel({
+  loading,
+  executions,
+  agents,
+}: {
+  loading: boolean
+  executions: RuntimeExecution[]
+  agents: PersistedAgent[]
+}) {
+  const [collapsedThreads, setCollapsedThreads] = React.useState<Set<string>>(
+    () => new Set()
+  )
+  const agentNames = React.useMemo(
+    () => new Map(agents.map((agent) => [agent.runtime_agent_id, agent.name])),
+    [agents]
+  )
+  const rows = React.useMemo(
+    () => executionRows(executions, collapsedThreads),
+    [collapsedThreads, executions]
+  )
+  const threadCount = executions.filter((item) => item.kind === "thread").length
+  const runCount = executions.filter((item) => item.kind === "run").length
+
+  function toggleThread(id: string) {
+    setCollapsedThreads((current) => {
+      const next = new Set(current)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  return (
+    <section className="border-t border-[var(--sl)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-[18px] py-3">
+        <div>
+          <div className="capcom-eyebrow">Runtime activity</div>
+          <h3 className="text-[14px] font-semibold text-[var(--tx)]">
+            Threads and runs
+          </h3>
+        </div>
+        <span className="font-hud text-[11px] text-[var(--fa)]">
+          {threadCount} thread{threadCount === 1 ? "" : "s"} / {runCount} run
+          {runCount === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      <div className="overflow-x-auto">
+      <Table className="min-w-[760px] table-fixed">
+        <colgroup>
+          <col className="w-[35%]" />
+          <col className="w-[20%]" />
+          <col className="w-[13%]" />
+          <col className="w-[17%]" />
+          <col className="w-[15%]" />
+        </colgroup>
+        <TableHeader>
+          <TableRow className="border-[var(--sl)] hover:bg-transparent">
+            <TableHead className="capcom-eyebrow h-9 px-[18px]">Execution</TableHead>
+            <TableHead className="capcom-eyebrow h-9 px-[18px]">Agent</TableHead>
+            <TableHead className="capcom-eyebrow h-9 px-[18px]">Status</TableHead>
+            <TableHead className="capcom-eyebrow h-9 px-[18px]">Started</TableHead>
+            <TableHead className="capcom-eyebrow h-9 px-[18px]">Duration</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {loading ? (
+            <AgentSkeletonRows columns={5} />
+          ) : rows.length ? (
+            rows.map(({ execution, depth, childCount }) => {
+              const isThread = execution.kind === "thread"
+              const collapsed = collapsedThreads.has(
+                execution.runtime_execution_id
+              )
+              return (
+                <TableRow
+                  key={`${execution.kind}:${execution.runtime_execution_id}`}
+                  className="border-[var(--sl)] hover:bg-[var(--sl)]"
+                >
+                  <TableCell className="px-[18px] py-3">
+                    <div
+                      className={cn(
+                        "flex min-w-0 items-start gap-2",
+                        depth && "pl-7"
+                      )}
+                    >
+                      {isThread ? (
+                        <button
+                          type="button"
+                          title={collapsed ? "Expand thread" : "Collapse thread"}
+                          aria-label={collapsed ? "Expand thread" : "Collapse thread"}
+                          className="mt-0.5 flex size-5 shrink-0 items-center justify-center text-[var(--fa)] hover:text-[var(--ac)]"
+                          onClick={() => toggleThread(execution.runtime_execution_id)}
+                        >
+                          <ChevronRight
+                            className={cn(
+                              "size-4 transition-transform",
+                              !collapsed && "rotate-90"
+                            )}
+                          />
+                        </button>
+                      ) : (
+                        <GitBranch className="mt-1 size-4 shrink-0 text-[var(--fa)]" />
+                      )}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-hud text-[12px] font-semibold text-[var(--tx)]">
+                            {isThread ? "Thread" : "Run"}
+                          </span>
+                          {isThread ? (
+                            <span className="font-hud text-[10px] text-[var(--fa)]">
+                              {childCount} run{childCount === 1 ? "" : "s"}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div
+                          className="truncate font-hud text-[11px] text-[var(--fa)]"
+                          title={execution.runtime_execution_id}
+                        >
+                          {execution.runtime_execution_id}
+                        </div>
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="truncate px-[18px] py-3 text-[12px] text-[var(--mu)]">
+                    {execution.runtime_agent_id
+                      ? agentNames.get(execution.runtime_agent_id) ??
+                        execution.runtime_agent_id
+                      : isThread
+                        ? threadAgentName(execution, agentNames)
+                        : "Unassigned"}
+                  </TableCell>
+                  <TableCell className="px-[18px] py-3">
+                    <RuntimeExecutionStatus status={execution.status} />
+                  </TableCell>
+                  <TableCell className="px-[18px] py-3 font-hud text-[12px] text-[var(--mu)]">
+                    {relativeTime(execution.started_at ?? execution.observed_at)}
+                  </TableCell>
+                  <TableCell className="px-[18px] py-3 font-hud text-[12px] text-[var(--fa)]">
+                    {executionDuration(execution)}
+                  </TableCell>
+                </TableRow>
+              )
+            })
+          ) : (
+            <TableRow className="border-[var(--sl)] hover:bg-transparent">
+              <TableCell
+                colSpan={5}
+                className="px-[18px] py-8 text-center text-[13px] text-[var(--mu)]"
+              >
+                No runtime executions imported yet. Run a sync after invoking an agent.
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+      </div>
+    </section>
+  )
+}
+
+function executionRows(
+  executions: RuntimeExecution[],
+  collapsedThreads: Set<string>
+) {
+  const children = new Map<string, RuntimeExecution[]>()
+  const threads: RuntimeExecution[] = []
+  const orphans: RuntimeExecution[] = []
+
+  for (const execution of executions) {
+    if (execution.kind === "thread") {
+      threads.push(execution)
+    } else if (execution.parent_runtime_execution_id) {
+      const bucket = children.get(execution.parent_runtime_execution_id) ?? []
+      bucket.push(execution)
+      children.set(execution.parent_runtime_execution_id, bucket)
+    } else {
+      orphans.push(execution)
+    }
+  }
+
+  const byNewest = (left: RuntimeExecution, right: RuntimeExecution) =>
+    executionTime(right) - executionTime(left)
+  threads.sort(byNewest)
+  orphans.sort(byNewest)
+
+  const rows: Array<{
+    execution: RuntimeExecution
+    depth: number
+    childCount: number
+  }> = []
+  const knownThreads = new Set(threads.map((item) => item.runtime_execution_id))
+  for (const thread of threads) {
+    const runs = (children.get(thread.runtime_execution_id) ?? []).sort(byNewest)
+    rows.push({ execution: thread, depth: 0, childCount: runs.length })
+    if (!collapsedThreads.has(thread.runtime_execution_id)) {
+      rows.push(
+        ...runs.map((execution) => ({ execution, depth: 1, childCount: 0 }))
+      )
+    }
+  }
+  for (const [parentID, runs] of children) {
+    if (!knownThreads.has(parentID)) {
+      orphans.push(...runs)
+    }
+  }
+  rows.push(
+    ...orphans.sort(byNewest).map((execution) => ({
+      execution,
+      depth: 0,
+      childCount: 0,
+    }))
+  )
+  return rows
+}
+
+function RuntimeExecutionStatus({ status }: { status: string }) {
+  const normalized = status.toLowerCase()
+  const className =
+    normalized === "success" || normalized === "completed"
+      ? "bg-[var(--acd)] text-[var(--ac)]"
+      : normalized.includes("fail") || normalized.includes("error")
+        ? "bg-[var(--dgd)] text-[var(--dg)]"
+        : normalized.includes("running") || normalized === "busy"
+          ? "bg-[var(--wnd)] text-[var(--wn)]"
+          : "bg-[var(--sl)] text-[var(--fa)]"
+
+  return (
+    <Badge className={cn("font-hud text-[11px]", className)}>
+      {status || "unknown"}
+    </Badge>
+  )
+}
+
+function threadAgentName(
+  execution: RuntimeExecution,
+  agentNames: Map<string, string>
+) {
+  const metadata = execution.metadata?.thread_metadata
+  if (!metadata || typeof metadata !== "object") {
+    return "Runtime thread"
+  }
+  const assistantID = (metadata as Record<string, unknown>).assistant_id
+  return typeof assistantID === "string"
+    ? agentNames.get(assistantID) ?? assistantID
+    : "Runtime thread"
+}
+
+function executionDuration(execution: RuntimeExecution) {
+  if (!execution.started_at || !execution.ended_at) {
+    return execution.ended_at ? "-" : "in progress"
+  }
+  const duration = Math.max(
+    0,
+    new Date(execution.ended_at).getTime() -
+      new Date(execution.started_at).getTime()
+  )
+  if (duration < 1000) {
+    return `${duration}ms`
+  }
+  if (duration < 60_000) {
+    return `${(duration / 1000).toFixed(1)}s`
+  }
+  return `${Math.floor(duration / 60_000)}m ${Math.round(
+    (duration % 60_000) / 1000
+  )}s`
+}
+
+function executionTime(execution: RuntimeExecution) {
+  return new Date(execution.started_at ?? execution.observed_at).getTime()
 }
 
 function InstanceSkillTotal({ agents }: { agents: PersistedAgent[] }) {
@@ -500,6 +813,7 @@ function capabilityEntries(capabilities: RuntimeCapabilities) {
   return [
     ["read_agents", "Read agents", capabilities.read_agents],
     ["read_agent_hierarchy", "Agent hierarchy", capabilities.read_agent_hierarchy],
+    ["read_agent_delegates", "Agent delegates", capabilities.read_agent_delegates],
     ["read_agent_skills", "Read skills", capabilities.read_agent_skills],
     ["read_agent_access", "Read access", capabilities.read_agent_access],
     ["replace_agent_access", "Replace access", capabilities.replace_agent_access],
@@ -508,6 +822,11 @@ function capabilityEntries(capabilities: RuntimeCapabilities) {
       "Subagent executions",
       Boolean(capabilities.read_subagent_executions),
     ],
+    ["read_executions", "Executions", Boolean(capabilities.read_executions)],
+    ["read_diagnostics", "Diagnostics", Boolean(capabilities.read_diagnostics)],
+    ["read_inventory", "Inventory", Boolean(capabilities.read_inventory)],
+    ["read_capability_catalog", "Capability catalog", Boolean(capabilities.read_capability_catalog)],
+    ["set_agent_status", "Agent status control", Boolean(capabilities.set_agent_status)],
   ] as const
 }
 
@@ -516,8 +835,8 @@ function PageFooter({ adapter }: { adapter: AdapterModel }) {
 
   return (
     <p className="font-hud text-[12px] text-[var(--fa)]">
-      Connection: {first?.endpoint ?? "none"} · adapter v
-      {adapterVersion(adapter.instances.map((item) => item.instance))} · freshness budget 5m per instance
+      Connection: {first?.endpoint ?? "none"} / adapter v
+      {adapterVersion(adapter.instances.map((item) => item.instance))} / freshness budget 5m per instance
     </p>
   )
 }
@@ -608,7 +927,8 @@ function adapterVersion(instances: RuntimeInstance[]) {
 function syncSummary(run: RuntimeSyncRun) {
   const agents = run.agents_seen ?? 0
   const skills = run.skills_seen ?? 0
-  return `Instance sync completed: ${agents} agents and ${skills} skills imported`
+  const executions = run.executions_seen ?? 0
+  return `Instance sync completed: ${agents} agents, ${skills} skills, and ${executions} executions imported`
 }
 
 function runtimeTypeFromRoute(adapterId: string): RuntimeType | undefined {

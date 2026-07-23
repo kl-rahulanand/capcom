@@ -17,6 +17,7 @@ type Adapter interface {
 	ListAgentSkills(ctx context.Context, conn domain.RuntimeConnection, runtimeAgentID string) ([]domain.AgentSkillSnapshot, error)
 	GetAgentAccess(ctx context.Context, conn domain.RuntimeConnection, runtimeAgentID string) (*domain.AccessDocument, error)
 	ReplaceAgentAccess(ctx context.Context, conn domain.RuntimeConnection, runtimeAgentID string, access domain.AccessDocument) (*domain.AccessDocument, error)
+	SetAgentStatus(ctx context.Context, conn domain.RuntimeConnection, runtimeAgentID string, status domain.AgentStatus) (*domain.AgentSnapshot, error)
 	CollectSnapshot(ctx context.Context, conn domain.RuntimeConnection) (*domain.RuntimeSnapshot, error)
 }
 
@@ -25,13 +26,20 @@ type CheckResult struct {
 	Message      string
 	Capabilities Capabilities
 	Metadata     map[string]any
+	Diagnostics  []domain.RuntimeDiagnosticSnapshot
 }
 
 type Capabilities struct {
 	ReadAgents             bool `json:"read_agents"`
 	ReadAgentHierarchy     bool `json:"read_agent_hierarchy"`
+	ReadAgentDelegates     bool `json:"read_agent_delegates"`
 	ReadAgentSkills        bool `json:"read_agent_skills"`
 	ReadAgentAccess        bool `json:"read_agent_access"`
 	ReplaceAgentAccess     bool `json:"replace_agent_access"`
 	ReadSubagentExecutions bool `json:"read_subagent_executions"`
+	ReadExecutions         bool `json:"read_executions"`
+	ReadDiagnostics        bool `json:"read_diagnostics"`
+	ReadInventory          bool `json:"read_inventory"`
+	ReadCapabilityCatalog  bool `json:"read_capability_catalog"`
+	SetAgentStatus         bool `json:"set_agent_status"`
 }

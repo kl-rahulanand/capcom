@@ -16,6 +16,37 @@ type reconcileAccessRequest struct {
 	DryRun         bool                     `json:"dry_run"`
 }
 
+type setAgentStatusRequest struct {
+	Status         domain.AgentStatus `json:"status"`
+	Actor          string             `json:"actor"`
+	Reason         string             `json:"reason"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	DryRun         bool               `json:"dry_run"`
+}
+
+func handleSetAgentStatus(cfg RouterConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ControlActions == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "control_actions_not_configured"})
+			return
+		}
+		var req setAgentStatusRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid_json"})
+			return
+		}
+		action, err := cfg.ControlActions.SetAgentStatus(r.Context(), services.SetAgentStatusInput{
+			AgentID: r.PathValue("id"), Status: req.Status, Actor: req.Actor, Reason: req.Reason,
+			IdempotencyKey: req.IdempotencyKey, DryRun: req.DryRun,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "action": controlActionResponse(action)})
+			return
+		}
+		writeJSON(w, http.StatusOK, controlActionResponse(action))
+	}
+}
+
 func handleReconcileAgentAccess(cfg RouterConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cfg.ControlActions == nil {

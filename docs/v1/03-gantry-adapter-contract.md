@@ -56,6 +56,7 @@ type RuntimeAdapter interface {
 | GetAgentAccess | `GET /v1/agents/{agentId}/access` |
 | ReplaceAgentAccess | `PUT /v1/agents/{agentId}/access` |
 | PatchAgentStatus | `PATCH /v1/agents/{agentId}` |
+| ListAgentDelegates | `GET /v1/agents/{agentId}/delegates` |
 | ListInventory | `GET /v1/inventory` |
 | ListCapabilities | `GET /v1/capabilities` |
 | ListAgentEvents | `GET /v1/sessions/{sessionId}/events` or run/job event routes |
@@ -63,16 +64,48 @@ type RuntimeAdapter interface {
 | ListRunEvents | `GET /v1/runs/{runId}/events` |
 | ResolveRunOwner | `GET /v1/jobs?limit=100` (`target.agentId`) |
 
+Doctor, inventory, and capability normalization are implemented. Doctor checks
+are stored by `(runtime_connection_id, check_id)`. Global inventory is stored as
+runtime-neutral `tool`, `skill`, and `mcp_server` items. Immutable capability
+manifests retain typed identity, version, category, risk, `can`, `cannot`, and
+source fields while preserving remaining Gantry metadata in JSONB.
+
+The instance-scoped Capcom read APIs are:
+
+- `GET /v1/runtime-instances/{id}/diagnostics`
+- `GET /v1/runtime-instances/{id}/inventory?kind=tool|skill|mcp_server`
+- `GET /v1/runtime-instances/{id}/capabilities`
+- `GET /v1/runtime-instances/{id}/agent-delegations`
+
+Gantry doctor warnings normalize the runtime to `degraded`; failed/error checks
+normalize it to `failed`. A failed collection preserves the last known catalog.
+
 Current Gantry returns agent inventory as `{ "agents": [...] }`. The adapter
 also accepts the earlier bare-array response so recorded fixtures and compatible
 older runtimes continue to work.
 
-Gantry's current durable agent inventory does not include parent-child fields for
-native execution-time subagents. Capcom classifies `agent:main_agent` as `main`
-and other returned durable agents as `registered`; it must not infer that every
-secondary registered agent is a subagent. Hierarchy capability remains false
-until Gantry exposes stable parent identity. Ephemeral delegated/subagent runs
-belong in execution history, not durable agent inventory.
+Gantry's durable inventory does not expose parent-child identity for native
+execution-time subagents. Capcom classifies `agent:main_agent` as `main` and
+other returned durable agents as `registered`; it must not infer that every
+secondary registered agent is a subagent. Hierarchy capability therefore stays
+false.
+
+Gantry now exposes configured and resolved callable-agent relationships through
+`GET /v1/agents/{agentId}/delegates`. Capcom stores these as directed,
+many-to-many delegation edges rather than forcing them into the parent field.
+Each edge retains the desired-state revision, configured versus
+conversation-bound provenance, resolution status, delegate reference, runtime
+agent identity, generated tool name, display name, and persona. Missing edges
+become stale only after repeated complete successful snapshots. Agent-scoped
+reads use `GET /v1/agents/{id}/delegations`.
+
+Gantry canonicalizes configured delegate references to settings folder names.
+Capcom treats that reference as the stable edge identity and derives the
+deterministic `agent:<folder>` runtime ID even when Gantry's `resolved` roster
+is empty. The edge remains `resolved=false` until Gantry reports it as callable.
+
+Ephemeral delegated/subagent runs remain execution history and do not become
+durable delegation edges or durable agents.
 
 Capcom recognizes a Gantry subagent execution only after a run event reports
 `taskKind: delegated_agent`. It correlates `task.started`, `task.progress`,
@@ -173,6 +206,12 @@ or:
 ```json
 { "status": "active" }
 ```
+
+Capcom exposes this as
+`POST /v1/agents/{id}/actions/set-status` with normalized `enabled` or
+`disabled` status. It requires a `control_enabled` connection, actor, reason,
+idempotency key, adapter capability validation, audit events, and a post-action
+sync. Dry-run performs every validation without calling Gantry.
 
 ### Skills
 
